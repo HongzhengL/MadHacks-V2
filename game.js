@@ -870,18 +870,18 @@ function hasActiveCard(title) {
 
 function generateCards() {
     // Fixed cards stick around for two rounds
-    if (state.round % 4 === 1 && !hasActiveCard("Rent"))
+    if (state.round % 2 === 1 && !hasActiveCard("Rent"))
         addCard("fixed", "Rent", state.home.cost, false, {
             roundsLeft: 2,
         });
-    if (state.round % 4 === 1 && !hasActiveCard("Utilities"))
+    if (state.round % 2 === 1 && !hasActiveCard("Utilities"))
         addCard("fixed", "Utilities", 50, false, { roundsLeft: 2 });
-    if (state.round % 4 === 1 && !hasActiveCard("Car Payment"))
+    if (state.round % 2 === 1 && !hasActiveCard("Car Payment"))
         addCard("fixed", "Car Payment", 750, false, {
             note: "Monthly auto loan.",
             roundsLeft: 2,
         });
-    if (state.round % 4 === 1 && !hasActiveCard("Student Loan"))
+    if (state.round % 2 === 1 && !hasActiveCard("Student Loan"))
         addCard("fixed", "Student Loan", 200, false, {
             note: "Monthly student loan payment.",
             roundsLeft: 2,
