@@ -127,6 +127,7 @@ const SAVINGS_RATES = {
 const RETIREMENT_BASE_APY = 0.09;
 const RETIREMENT_VOLATILITY = { min: -0.25, max: 1.5 };
 const EMPLOYER_MATCH = { percent: 0.5, capPerRound: 75 };
+const DEBT_INTEREST_RATE = 0.02; // 2% per round (~52% APR for typical credit card)
 
 let state = {
     round: 1,
@@ -145,6 +146,11 @@ let state = {
     scheduledWithdrawals: [],
     debtRecords: [],
     coverage: { health: false },
+    stats: {
+        totalInterestPaid: 0,
+        consecutiveInterestRounds: 0,
+        lastRoundDebt: 0,
+    },
     flags: {
         rentHiked: false,
         sideHustleUnlocked: false,
@@ -472,6 +478,51 @@ function maybeApplyEmployerMatch(payment) {
     return match;
 }
 
+function applyDebtInterest() {
+    if (state.debt <= 0) {
+        state.stats.consecutiveInterestRounds = 0;
+        state.stats.lastRoundDebt = 0;
+        return 0;
+    }
+
+    const oldDebt = state.debt;
+    const interestCharge = Math.round(state.debt * DEBT_INTEREST_RATE);
+
+    if (interestCharge > 0) {
+        // Add interest to total debt
+        state.debt += interestCharge;
+
+        // Record as a specific debt item
+        state.debtRecords.push({
+            id: Date.now() + Math.random(),
+            amount: interestCharge,
+            reason: `Compound Interest (${Math.round(DEBT_INTEREST_RATE * 100)}%)`,
+            type: 'interest',
+        });
+
+        // Update stats
+        state.stats.totalInterestPaid += interestCharge;
+
+        // Track if debt is growing due to interest
+        if (state.stats.lastRoundDebt > 0 && oldDebt >= state.stats.lastRoundDebt) {
+            state.stats.consecutiveInterestRounds += 1;
+        } else {
+            state.stats.consecutiveInterestRounds = 1;
+        }
+        state.stats.lastRoundDebt = state.debt;
+
+        // Sync the debt card if it exists
+        syncDebtCardAmount();
+
+        // Show toast notification
+        showToast(`Interest applied: Your debt grew by $${interestCharge}.`);
+
+        return interestCharge;
+    }
+
+    return 0;
+}
+
 function applySavingsInterest() {
     const earned = [];
     const emerg = state.savings.emergency || 0;
@@ -541,6 +592,12 @@ function applySavingsInterest() {
 function startRound() {
     state.retirementMatchThisRound = 0;
     processScheduledWithdrawals();
+
+    // Apply compound interest on debt BEFORE paycheck
+    const interestThisRound = applyDebtInterest();
+    // Store for round log
+    state.lastInterestCharge = interestThisRound;
+
     applySavingsInterest();
 
     if (state.flags.layoffRoundsLeft > 0) {
@@ -1836,6 +1893,24 @@ function showEndgameSummary(isVictory = false) {
 
 function buildRoundLog(unpaidFixed, extraLogs = []) {
     const log = [];
+
+    // Educational messages about compound interest
+    if (state.lastInterestCharge && state.lastInterestCharge > 0) {
+        const oldDebt = state.stats.lastRoundDebt - state.lastInterestCharge;
+
+        if (state.stats.consecutiveInterestRounds >= 3) {
+            // Snowball effect warning
+            log.push(
+                `Because you've carried debt for ${state.stats.consecutiveInterestRounds} consecutive rounds, compound interest is working against you. Your debt is growing faster than you're paying it down. The $${state.lastInterestCharge} in interest this round was added on top of your existing balance.`
+            );
+        } else {
+            // Standard interest explanation
+            log.push(
+                `Because you carried a balance of $${Math.round(oldDebt)}, interest charges added $${state.lastInterestCharge} to your burden. This is the 'cost' of borrowing—it compounds every round you carry a balance.`
+            );
+        }
+    }
+
     let totalCredit = 0;
 
     state.cards.forEach((card) => {
