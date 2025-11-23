@@ -322,6 +322,103 @@
                 transition: opacity 0.3s;
                 pointer-events: none;
             }
+
+            /* --- RECAP --- */
+            .recap-panel {
+                width: min(480px, 92vw);
+                max-height: 80vh;
+                overflow-y: auto;
+                background: #ffffff;
+                padding: 16px;
+                border-radius: 12px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .recap-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+            }
+            .recap-eyebrow {
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: #c5050c;
+                font-weight: 700;
+            }
+            .recap-title {
+                font-size: 1.1rem;
+                color: #333;
+                margin: 2px 0;
+            }
+            .recap-round {
+                font-weight: bold;
+                color: #555;
+                background: #f8f9fa;
+                padding: 6px 10px;
+                border-radius: 6px;
+                border: 1px solid #e1e4e8;
+            }
+            .recap-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .recap-item {
+                display: flex;
+                gap: 8px;
+                align-items: flex-start;
+                background: #f9fafb;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 0.9rem;
+                color: #444;
+            }
+            .recap-dot {
+                width: 10px;
+                height: 10px;
+                margin-top: 5px;
+                border-radius: 50%;
+                background: #c5050c;
+                flex-shrink: 0;
+            }
+            .recap-empty {
+                color: #777;
+                font-style: italic;
+                font-size: 0.9rem;
+            }
+            .recap-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                z-index: 1000;
+                padding: 20px;
+                box-sizing: border-box;
+            }
+            .recap-overlay.show {
+                display: flex;
+            }
+            .btn-ghost {
+                background: transparent;
+                border: 1px solid #ddd;
+                color: #444;
+                padding: 9px 14px;
+                border-radius: 6px;
+                cursor: pointer;
+            }
         </style>
     </head>
     <body>
@@ -361,12 +458,41 @@
                     style="background: #e3f2fd; color: #1565c0">
                     QoL: <span id="ui-qol" style="margin-left: 5px">50</span>
                 </div>
+                <button class="btn-ghost" onclick="openRecap()">
+                    View Recap
+                </button>
                 <button class="btn-primary" onclick="nextRound()">
                     Finish Round
                 </button>
             </div>
         </header>
 
+        <div
+            id="recap-modal"
+            class="recap-overlay"
+            onclick="if(event.target === this) closeRecap()">
+            <div class="recap-panel">
+                <div class="recap-header">
+                    <div>
+                        <div class="recap-eyebrow">Because you...</div>
+                        <div class="recap-title">Last round's ripple effects</div>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center">
+                        <div class="recap-round">
+                            Round <span id="recap-round">-</span>
+                        </div>
+                        <button class="btn-ghost" onclick="closeRecap()">Close</button>
+                    </div>
+                </div>
+                <ul class="recap-list" id="recap-list">
+                    <li class="recap-empty">
+                        Finish a round to see the cause-and-effect story.
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        
         <div class="wallet-row">
             <span style="font-weight: bold; font-size: 0.9rem; color: #555"
                 >Drag to Pay:</span
@@ -474,6 +600,8 @@
                 job: null,
                 home: null,
                 cards: [],
+                lastLog: [],
+                lastLogRound: null,
             };
 
             // --- INIT ---
@@ -687,6 +815,7 @@
                         `col-${card.type}-content`,
                     ).innerHTML += html;
                 });
+                renderLog();
             }
 
             function updateHeader() {
@@ -696,6 +825,107 @@
                 document.getElementById("ui-qol").innerText = state.qol;
             }
 
+            function renderLog() {
+                const list = document.getElementById("recap-list");
+                const roundLabel = document.getElementById("recap-round");
+
+                if (!state.lastLogRound || state.lastLog.length === 0) {
+                    list.innerHTML = `<li class="recap-empty">Finish a round to see the cause-and-effect story.</li>`;
+                    roundLabel.innerText = "—";
+                    return;
+                }
+
+                roundLabel.innerText = state.lastLogRound;
+                list.innerHTML = state.lastLog
+                    .map(
+                        (msg) => `
+                    <li class="recap-item">
+                        <span class="recap-dot"></span>
+                        <span>${msg}</span>
+                    </li>`,
+                    )
+                    .join("");
+            }
+
+            function openRecap() {
+                const modal = document.getElementById("recap-modal");
+                renderLog();
+                modal.classList.add("show");
+            }
+
+            function closeRecap() {
+                const modal = document.getElementById("recap-modal");
+                modal.classList.remove("show");
+            }
+
+            function buildRoundLog(unpaidFixed) {
+                const log = [];
+                let totalCredit = 0;
+
+                state.cards.forEach((card) => {
+                    const paid = card.payments.reduce(
+                        (sum, p) => sum + p.amount,
+                        0,
+                    );
+                    const creditPaid = card.payments
+                        .filter((p) => p.type === "credit")
+                        .reduce((sum, p) => sum + p.amount, 0);
+                    const remaining = Math.max(0, card.amount - paid);
+
+                    totalCredit += creditPaid;
+
+                    if (paid >= card.amount) {
+                        if (creditPaid > 0) {
+                            log.push(
+                                `Because you put $${creditPaid} of ${card.title} on credit, your debt grew and interest can pile up.`,
+                            );
+                        } else {
+                            log.push(
+                                `Because you paid ${card.title} in full, you avoided fees and protected your credit score.`,
+                            );
+                        }
+
+                        if (
+                            card.title.toLowerCase().includes("emergency fund")
+                        ) {
+                            log.push(
+                                "Because you built your emergency fund, a surprise won't wreck your credit.",
+                            );
+                        }
+                    } else {
+                        if (card.optional) {
+                            log.push(
+                                `Because you skipped ${card.title.toLowerCase()}, you're still exposed if something goes wrong.`,
+                            );
+                        } else {
+                            log.push(
+                                `Because you skipped ${card.title.toLowerCase()}, $${remaining} will follow you and can trigger penalties.`,
+                            );
+                        }
+                    }
+                });
+
+                unpaidFixed.forEach((card) => {
+                    const paid = card.payments.reduce(
+                        (sum, p) => sum + p.amount,
+                        0,
+                    );
+                    const missed = card.amount - paid;
+                    const penalty = missed + 50;
+                    log.push(
+                        `Because you missed ${card.title.toLowerCase()}, debt jumped by $${penalty} ($${missed} bill + $50 penalty) and QoL dropped.`,
+                    );
+                });
+
+                if (totalCredit > 0) {
+                    log.push(
+                        `Because you used credit this round, your balance grew by $${totalCredit}; paying it off soon avoids interest.`,
+                    );
+                }
+
+                return log;
+            }
+
             function nextRound() {
                 // Check unpaid fixed
                 let unpaidFixed = state.cards.filter(
@@ -703,6 +933,9 @@
                         c.type === "fixed" &&
                         c.payments.reduce((s, p) => s + p.amount, 0) < c.amount,
                 );
+
+                const roundLog = buildRoundLog(unpaidFixed);
+                const finishingRound = state.round;
 
                 if (unpaidFixed.length > 0) {
                     if (
@@ -717,6 +950,9 @@
                         state.qol -= 5;
                     });
                 }
+
+                state.lastLog = roundLog;
+                state.lastLogRound = finishingRound;
 
                 state.round += 2;
                 if (state.round > 26) {
