@@ -595,10 +595,25 @@
                     { id: "easy", label: "Senior", pay: 2880 },
                 ],
                 housing: [
-                    { id: "shared", label: "Shared Room", cost: 350 },
-                    { id: "apt", label: "1BR Apt", cost: 800 },
-                    { id: "lux", label: "Luxury Loft", cost: 1100 },
+                    { id: "shared", label: "Shared Room", cost: 350, qolPerRound: -2 },
+                    { id: "apt", label: "1BR Apt", cost: 800, qolPerRound: 0 },
+                    { id: "lux", label: "Luxury Loft", cost: 1100, qolPerRound: 3 },
                 ],
+            };
+
+            const VAR_RULES = {
+                food: {
+                    title: "Food",
+                    base: 120,
+                    max: 200,
+                    qolBoostMax: 8,
+                },
+                entertainment: {
+                    title: "Entertainment",
+                    base: 60,
+                    max: 180,
+                    qolBoostMax: 10,
+                },
             };
 
             let state = {
@@ -613,6 +628,11 @@
                 cards: [],
                 lastLog: [],
                 lastLogRound: null,
+                variableTracker: {
+                    food: { missedRounds: 0 },
+                    entertainment: { missedRounds: 0 },
+                },
+                homeLogThisRound: null,
             };
 
             // --- DEBT HELPERS ---
@@ -666,6 +686,14 @@
 
             // --- ROUND LOGIC ---
             function startRound() {
+                const homeQolShift = state.home?.qolPerRound || 0;
+                if (homeQolShift) {
+                    state.qol += homeQolShift;
+                    const direction = homeQolShift > 0 ? "rose" : "fell";
+                    state.homeLogThisRound = `Because you live in ${state.home.label}, QoL ${direction} by ${Math.abs(homeQolShift)} this round.`;
+                } else {
+                    state.homeLogThisRound = null;
+                }
                 state.cash += state.job.pay;
                 showToast(`Payday! +$${state.job.pay}`);
                 generateCards();
@@ -676,15 +704,31 @@
                 state.cards = [];
                 if (state.round % 4 === 1) addCard("fixed", "Rent", state.home.cost);
                 if (state.round % 4 === 1) addCard("fixed", "Utilities", 120);
-                addCard("var", "Groceries", 200);
-                addCard("var", "Fun / Entertainment", 100);
+                addCard(
+                    "var",
+                    VAR_RULES.food.title,
+                    VAR_RULES.food.max,
+                    true,
+                    { category: "food", base: VAR_RULES.food.base, max: VAR_RULES.food.max },
+                );
+                addCard(
+                    "var",
+                    VAR_RULES.entertainment.title,
+                    VAR_RULES.entertainment.max,
+                    true,
+                    {
+                        category: "entertainment",
+                        base: VAR_RULES.entertainment.base,
+                        max: VAR_RULES.entertainment.max,
+                    },
+                );
                 addCard("goal", "Emergency Fund", 100, true); // true = optional
 
                 if (Math.random() > 0.7)
                     addCard("event", "Speeding Ticket", 150);
             }
 
-            function addCard(type, title, amount, optional = false) {
+            function addCard(type, title, amount, optional = false, meta = {}) {
                 state.cards.push({
                     id: Date.now() + Math.random(),
                     type,
@@ -692,6 +736,7 @@
                     amount,
                     payments: [], // NEW: Track specific bills dropped here
                     optional,
+                    meta,
                 });
             }
 
@@ -717,15 +762,16 @@
                 let valStr = ev.dataTransfer.getData("val");
                 let type = ev.dataTransfer.getData("type");
 
-                // Calculate current total paid
+                // Calculate current total paid and cap for variable spending
+                const cap = card.meta?.max ?? card.amount;
                 let currentPaid = card.payments.reduce(
                     (sum, p) => sum + p.amount,
                     0,
                 );
-                let remaining = card.amount - currentPaid;
+                let remaining = Math.max(0, cap - currentPaid);
 
-                if (remaining <= 0 && !card.optional) {
-                    showToast("Card already paid!");
+                if (remaining <= 0) {
+                    showToast("You've already maxed this out for the round.");
                     return;
                 }
 
@@ -739,11 +785,17 @@
                     amount = remaining; // Credit pays full remainder
                 } else {
                     amount = parseInt(valStr);
+                    amount = Math.min(amount, remaining);
                     if (state.cash < amount) {
                         showToast("Not enough cash!");
                         return;
                     }
                     state.cash -= amount;
+                }
+
+                if (!amount || amount <= 0) {
+                    showToast("Drop a bill to pay.");
+                    return;
                 }
 
                 // ADD PAYMENT TO STACK (The Undo Hook)
@@ -810,8 +862,23 @@
                         (sum, p) => sum + p.amount,
                         0,
                     );
-                    let progress = Math.min(100, (paid / card.amount) * 100);
-                    let isDone = paid >= card.amount;
+                    const maxTarget = card.meta?.max ?? card.amount;
+                    const baseTarget = card.meta?.base ?? card.amount;
+                    const isVariable = card.type === "var";
+                    let progress = Math.min(100, (paid / maxTarget) * 100);
+                    let isDone = isVariable ? paid >= baseTarget : paid >= card.amount;
+                    const hideDrop = isVariable ? paid >= maxTarget : isDone;
+
+                    const displayAmount = isVariable
+                        ? `Up to $${maxTarget}`
+                        : `$${card.amount}`;
+                    const footerText = isVariable
+                        ? isDone
+                            ? `QoL covered (spent $${paid})`
+                            : `$${Math.max(0, baseTarget - paid)} until QoL holds`
+                        : isDone
+                          ? "Paid!"
+                          : `$${Math.max(0, card.amount - paid)} left`;
 
                     // Generate Mini-Bills HTML
                     let stackHtml = card.payments
@@ -835,15 +902,23 @@
             <div class="game-card ${card.type} ${isDone ? "paid-full" : ""}">
                 <div class="card-top">
                     <span class="card-title">${card.title}</span>
-                    <span style="font-weight:bold">$${card.amount}</span>
+                    <span style="font-weight:bold">${displayAmount}</span>
                 </div>
                 
                 ${
-                    !isDone
+                    !hideDrop
                         ? `
                 <div class="drop-zone" ondrop="drop(event, ${card.id})" ondragover="allowDrop(event)" ondragleave="leaveDrop(event)">
                     Drop Here
                 </div>`
+                        : ""
+                }
+
+                ${
+                    isVariable
+                        ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                            Base $${baseTarget} keeps QoL steady; up to $${maxTarget} gives smaller boosts.
+                           </div>`
                         : ""
                 }
 
@@ -855,7 +930,7 @@
                     <div class="card-progress-bar" style="width: ${progress}%"></div>
                 </div>
                 <div style="text-align:right; font-size:0.8rem; margin-top:4px; color:#666;">
-                    ${isDone ? "Paid!" : `$${card.amount - paid} left`}
+                    ${footerText}
                 </div>
             </div>
         `;
@@ -891,7 +966,7 @@
 
                 if (!state.lastLogRound || state.lastLog.length === 0) {
                     list.innerHTML = `<li class="recap-empty">Finish a round to see the cause-and-effect story.</li>`;
-                    roundLabel.innerText = "—";
+                    roundLabel.innerText = "-";
                     return;
                 }
 
@@ -918,7 +993,7 @@
                 modal.classList.remove("show");
             }
 
-            function buildRoundLog(unpaidFixed) {
+            function buildRoundLog(unpaidFixed, extraLogs = []) {
                 const log = [];
                 let totalCredit = 0;
 
@@ -933,6 +1008,11 @@
                     const remaining = Math.max(0, card.amount - paid);
 
                     totalCredit += creditPaid;
+
+                    // Variable expenses are handled separately in variableOutcome logging.
+                    if (card.type === "var") {
+                        return;
+                    }
 
                     if (paid >= card.amount) {
                         if (creditPaid > 0) {
@@ -983,7 +1063,88 @@
                     );
                 }
 
-                return log;
+                return log.concat(extraLogs);
+            }
+
+            function getSpendForCategory(category) {
+                return state.cards
+                    .filter(
+                        (c) => c.meta && c.meta.category === category,
+                    )
+                    .reduce(
+                        (sum, card) =>
+                            sum +
+                            card.payments.reduce((s, p) => s + p.amount, 0),
+                        0,
+                    );
+            }
+
+            function calcBoost(spend, maxSpend, maxBoost) {
+                if (spend <= 0) return 0;
+                const ratio = Math.min(1, spend / maxSpend);
+                return Math.round(maxBoost * Math.sqrt(ratio));
+            }
+
+            function processVariableSpending() {
+                const effects = [];
+                let qolDelta = 0;
+
+                const categories = [
+                    { key: "food", rules: VAR_RULES.food },
+                    { key: "entertainment", rules: VAR_RULES.entertainment },
+                ];
+
+                categories.forEach(({ key, rules }) => {
+                    const spend = getSpendForCategory(key);
+                    const tracker = state.variableTracker[key];
+                    const base = rules.base;
+                    const max = rules.max;
+
+                    if (spend >= base) {
+                        tracker.missedRounds = 0;
+                        const boost = calcBoost(spend, max, rules.qolBoostMax);
+                        if (boost > 0) {
+                            qolDelta += boost;
+                            effects.push(
+                                `Because you spent $${spend} on ${rules.title.toLowerCase()}, QoL rose by ${boost} (diminishing returns).`,
+                            );
+                        } else {
+                            effects.push(
+                                `Because you covered ${rules.title.toLowerCase()}, QoL held steady.`,
+                            );
+                        }
+                    } else {
+                        tracker.missedRounds += 1;
+                        const short = Math.max(0, base - spend);
+                        let penalty = 0;
+
+                        if (key === "food") {
+                            penalty = Math.min(15, 6 + tracker.missedRounds * 5);
+                        } else {
+                            // Entertainment tolerates one light round before slipping
+                            penalty =
+                                tracker.missedRounds >= 2
+                                    ? Math.min(
+                                          12,
+                                          3 * (tracker.missedRounds - 1) + 1,
+                                      )
+                                    : 0;
+                        }
+
+                        if (penalty > 0) {
+                            qolDelta -= penalty;
+                            effects.push(
+                                `Because you underfunded ${rules.title.toLowerCase()} for ${tracker.missedRounds} round(s), QoL fell by ${penalty}.`,
+                            );
+                        } else {
+                            effects.push(
+                                `Because you spent only $${spend} on ${rules.title.toLowerCase()}, QoL didn't improve; wait too long and it will drop.`,
+                            );
+                        }
+                    }
+                });
+
+                return { effects, qolDelta };
             }
 
             function nextRound() {
@@ -994,7 +1155,10 @@
                         c.payments.reduce((s, p) => s + p.amount, 0) < c.amount,
                 );
 
-                const roundLog = buildRoundLog(unpaidFixed);
+                const variableOutcome = processVariableSpending();
+                const extra = [...variableOutcome.effects];
+                if (state.homeLogThisRound) extra.unshift(state.homeLogThisRound);
+                const roundLog = buildRoundLog(unpaidFixed, extra);
                 const finishingRound = state.round;
 
                 if (unpaidFixed.length > 0) {
@@ -1016,8 +1180,11 @@
                     });
                 }
 
+                state.qol += variableOutcome.qolDelta;
+
                 state.lastLog = roundLog;
                 state.lastLogRound = finishingRound;
+                state.homeLogThisRound = null;
 
                 state.round += 2;
                 if (state.round > 26) {
