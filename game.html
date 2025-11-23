@@ -3,24 +3,17 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>The Badger Budget: Madison Edition</title>
+        <title>The Badger Budget: Planning Edition</title>
         <style>
             :root {
                 --bg-color: #f4f5f7;
                 --header-bg: #ffffff;
-                --primary-red: #c5050c; /* UW Red */
+                --primary-red: #c5050c;
                 --money-green: #2ecc71;
                 --money-blue: #3498db;
                 --money-yellow: #f1c40f;
                 --money-gray: #95a5a6;
                 --credit-purple: #9b59b6;
-
-                /* Column Headers */
-                --col-fixed: #f0f0f0;
-                --col-var: #e3f2fd;
-                --col-goal: #fff3e0;
-                --col-event: #e8f5e9;
-                --col-opp: #f3e5f5;
             }
 
             body {
@@ -31,10 +24,13 @@
                 height: 100vh;
                 display: flex;
                 flex-direction: column;
-                overflow: hidden; /* Prevent full page scroll, scroll columns instead */
+                overflow: hidden;
             }
 
-            /* --- SETUP SCREENS --- */
+            /* --- UTILS --- */
+            .hidden {
+                display: none !important;
+            }
             .modal-overlay {
                 position: fixed;
                 top: 0;
@@ -60,8 +56,7 @@
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 15px;
-                margin-top: 20px;
-                margin-bottom: 20px;
+                margin: 20px 0;
             }
             .select-card {
                 border: 2px solid #ddd;
@@ -74,28 +69,8 @@
                 border-color: var(--primary-red);
                 background: #fff5f5;
             }
-            .select-card.selected {
-                border-color: var(--primary-red);
-                background: #ffebeb;
-                transform: scale(1.02);
-            }
-            .btn {
-                padding: 10px 20px;
-                border-radius: 6px;
-                border: none;
-                cursor: pointer;
-                font-weight: bold;
-                font-size: 1rem;
-            }
-            .btn-primary {
-                background: var(--primary-red);
-                color: white;
-            }
-            .hidden {
-                display: none !important;
-            }
 
-            /* --- HEADER & WALLET --- */
+            /* --- HEADER --- */
             header {
                 background: var(--header-bg);
                 padding: 10px 20px;
@@ -103,16 +78,7 @@
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                z-index: 10;
             }
-
-            .header-left,
-            .header-right {
-                display: flex;
-                gap: 15px;
-                align-items: center;
-            }
-
             .stat-badge {
                 padding: 8px 16px;
                 border-radius: 6px;
@@ -131,23 +97,27 @@
                 color: #27ae60;
                 border: 1px solid #c8e6c9;
             }
-            .bg-red-light {
-                background: #ffebee;
-                color: #c62828;
+            .btn-primary {
+                background: var(--primary-red);
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 6px;
+                cursor: pointer;
             }
 
+            /* --- WALLET --- */
             .wallet-row {
                 background: white;
                 padding: 10px 20px;
                 border-bottom: 1px solid #ddd;
                 display: flex;
                 align-items: center;
-                gap: 20px;
+                gap: 15px;
             }
-
             .bill {
-                width: 70px;
-                height: 40px;
+                width: 60px;
+                height: 35px;
                 border-radius: 4px;
                 display: flex;
                 justify-content: center;
@@ -157,7 +127,6 @@
                 cursor: grab;
                 box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
                 user-select: none;
-                transition: transform 0.1s;
             }
             .bill:active {
                 cursor: grabbing;
@@ -171,17 +140,17 @@
             }
             .bill-10 {
                 background: var(--money-yellow);
-                color: #555;
+                color: #444;
             }
             .bill-1 {
                 background: var(--money-gray);
             }
             .card-credit {
                 background: var(--credit-purple);
-                width: 90px;
+                width: 80px;
             }
 
-            /* --- KANBAN BOARD --- */
+            /* --- BOARD --- */
             .board {
                 display: flex;
                 flex: 1;
@@ -189,10 +158,9 @@
                 gap: 10px;
                 overflow-x: auto;
             }
-
             .column {
                 flex: 1;
-                min-width: 200px;
+                min-width: 220px;
                 background: white;
                 border-radius: 8px;
                 display: flex;
@@ -200,7 +168,6 @@
                 border-top: 5px solid #ccc;
             }
 
-            /* Column Specific Colors (Headers) */
             .col-fixed {
                 border-top-color: #f1c40f;
                 background: #fffde7;
@@ -227,30 +194,26 @@
                 font-weight: bold;
                 display: flex;
                 justify-content: space-between;
-                font-size: 0.9rem;
+                font-size: 0.85rem;
                 color: #555;
-                background: rgba(255, 255, 255, 0.5);
             }
-
             .col-content {
                 padding: 10px;
                 flex: 1;
                 overflow-y: auto;
             }
 
-            /* --- GAME CARDS --- */
+            /* --- GAME CARD --- */
             .game-card {
                 background: white;
                 border: 1px solid #ddd;
                 border-left: 4px solid #ccc;
                 border-radius: 6px;
-                padding: 12px;
+                padding: 10px;
                 margin-bottom: 10px;
                 box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
                 position: relative;
-                transition: all 0.2s;
             }
-
             .game-card.fixed {
                 border-left-color: #f1c40f;
             }
@@ -267,8 +230,7 @@
                 border-left-color: #9b59b6;
             }
 
-            .game-card.paid {
-                opacity: 0.6;
+            .game-card.paid-full {
                 border-left-color: #2ecc71;
                 background: #f0fff4;
             }
@@ -282,28 +244,15 @@
                 font-weight: bold;
                 font-size: 0.9rem;
             }
-            .card-amount {
-                font-weight: bold;
-                font-size: 1rem;
-            }
 
-            .card-meta {
-                font-size: 0.8rem;
-                color: #666;
-                margin-bottom: 8px;
-                display: flex;
-                align-items: center;
-                gap: 5px;
-            }
-
-            /* The Drop Zone inside the card */
             .drop-zone {
                 border: 2px dashed #ccc;
                 border-radius: 4px;
-                padding: 10px;
+                padding: 15px 5px;
                 text-align: center;
                 font-size: 0.8rem;
                 color: #aaa;
+                margin-top: 5px;
                 transition: background 0.2s;
             }
             .drop-zone.hover {
@@ -312,7 +261,40 @@
                 color: #2ecc71;
             }
 
-            /* Progress Bar on Card */
+            /* --- MINI BILLS (UNDO UI) --- */
+            .payment-stack {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px;
+                margin-top: 8px;
+                min-height: 20px;
+            }
+            .mini-bill {
+                font-size: 0.7rem;
+                padding: 2px 6px;
+                border-radius: 3px;
+                color: white;
+                cursor: pointer;
+                user-select: none;
+                position: relative;
+            }
+            .mini-bill:hover::after {
+                content: "×";
+                position: absolute;
+                top: -5px;
+                right: -5px;
+                background: red;
+                color: white;
+                border-radius: 50%;
+                width: 12px;
+                height: 12px;
+                font-size: 10px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+
+            /* Progress Bar */
             .card-progress {
                 height: 4px;
                 background: #eee;
@@ -338,7 +320,7 @@
                 border-radius: 20px;
                 opacity: 0;
                 transition: opacity 0.3s;
-                z-index: 2000;
+                pointer-events: none;
             }
         </style>
     </head>
@@ -346,49 +328,49 @@
         <div id="setup-modal" class="modal-overlay">
             <div class="modal-box" id="setup-step-1">
                 <h2>Welcome to Madison! 🦡</h2>
-                <p>Choose your income level to start.</p>
+                <p>Select your income level:</p>
                 <div class="selection-grid" id="diff-options"></div>
             </div>
             <div class="modal-box hidden" id="setup-step-2">
-                <h2>Where will you live?</h2>
-                <p>Rent is due every 2 weeks (half month).</p>
+                <h2>Choose Housing</h2>
+                <p>Rent is paid every 2 weeks.</p>
                 <div class="selection-grid" id="housing-options"></div>
             </div>
         </div>
 
         <header>
-            <div class="header-left">
+            <div style="display: flex; gap: 10px; align-items: center">
                 <h3 style="margin: 0; color: var(--primary-red)">
-                    The Badger Budget
+                    Badger Budget
                 </h3>
                 <div class="stat-badge bg-light">
                     Week <span id="ui-round">1</span>
                 </div>
             </div>
-            <div class="header-right">
+            <div style="display: flex; gap: 10px; align-items: center">
                 <div class="stat-badge bg-green-light">
-                    <span>Balance:</span>
-                    <span id="ui-cash">$0</span>
+                    Balance:
+                    <span id="ui-cash" style="margin-left: 5px">$0</span>
                 </div>
                 <div class="stat-badge bg-light">
-                    <span>Credit Used:</span>
-                    <span id="ui-debt">$0</span>
-                    <span style="font-size: 0.8em; color: #999">/ $5000</span>
+                    Credit:
+                    <span id="ui-debt" style="margin-left: 5px">$0</span>
                 </div>
                 <div
                     class="stat-badge"
-                    id="ui-qol-badge"
                     style="background: #e3f2fd; color: #1565c0">
-                    QoL: <span id="ui-qol">50</span>
+                    QoL: <span id="ui-qol" style="margin-left: 5px">50</span>
                 </div>
-                <button class="btn btn-primary" onclick="nextRound()">
-                    Next Round
+                <button class="btn-primary" onclick="nextRound()">
+                    Finish Round
                 </button>
             </div>
         </header>
 
         <div class="wallet-row">
-            <span style="font-weight: bold; color: #555">Available Bills:</span>
+            <span style="font-weight: bold; font-size: 0.9rem; color: #555"
+                >Drag to Pay:</span
+            >
             <div
                 class="bill bill-100"
                 draggable="true"
@@ -421,15 +403,7 @@
                 data-type="cash">
                 $1
             </div>
-
-            <div
-                style="
-                    width: 2px;
-                    height: 30px;
-                    background: #ddd;
-                    margin: 0 10px;
-                "></div>
-
+            <div style="width: 1px; height: 20px; background: #ddd"></div>
             <div
                 class="bill card-credit"
                 draggable="true"
@@ -438,97 +412,57 @@
                 data-type="credit">
                 💳 Credit
             </div>
+            <span style="font-size: 0.8rem; color: #888; margin-left: auto"
+                >Tip: Click small bills on cards to undo.</span
+            >
         </div>
 
         <div class="board">
             <div class="column col-fixed">
                 <div class="col-header">
-                    <span>FIXED EXPENSE</span>
-                    <span id="count-fixed">(0)</span>
+                    FIXED <span id="count-fixed">(0)</span>
                 </div>
                 <div class="col-content" id="col-fixed-content"></div>
             </div>
-
             <div class="column col-var">
                 <div class="col-header">
-                    <span>VARIABLE EXPENSE</span>
-                    <span id="count-var">(0)</span>
+                    VARIABLE <span id="count-var">(0)</span>
                 </div>
                 <div class="col-content" id="col-var-content"></div>
             </div>
-
             <div class="column col-goal">
                 <div class="col-header">
-                    <span>GOAL</span>
-                    <span id="count-goal">(0)</span>
+                    GOAL <span id="count-goal">(0)</span>
                 </div>
                 <div class="col-content" id="col-goal-content"></div>
             </div>
-
             <div class="column col-event">
                 <div class="col-header">
-                    <span>EVENT</span>
-                    <span id="count-event">(0)</span>
+                    EVENT <span id="count-event">(0)</span>
                 </div>
                 <div class="col-content" id="col-event-content"></div>
             </div>
-
             <div class="column col-opp">
                 <div class="col-header">
-                    <span>OPPORTUNITY</span>
-                    <span id="count-opp">(0)</span>
+                    OPPORTUNITY <span id="count-opp">(0)</span>
                 </div>
                 <div class="col-content" id="col-opp-content"></div>
             </div>
         </div>
 
-        <div id="toast" class="toast">Message</div>
+        <div id="toast" class="toast">Msg</div>
 
         <script>
-            /* --- DATA & CONFIG --- */
             const CONFIG = {
                 difficulties: [
-                    {
-                        id: "hard",
-                        label: "Entry Level",
-                        pay: 1440,
-                        desc: "$50k/yr",
-                    },
-                    {
-                        id: "med",
-                        label: "Mid-Career",
-                        pay: 2160,
-                        desc: "$75k/yr",
-                    },
-                    {
-                        id: "easy",
-                        label: "Senior Role",
-                        pay: 2880,
-                        desc: "$100k/yr",
-                    },
+                    { id: "hard", label: "Entry Level", pay: 1440 },
+                    { id: "med", label: "Mid-Career", pay: 2160 },
+                    { id: "easy", label: "Senior", pay: 2880 },
                 ],
                 housing: [
-                    {
-                        id: "shared",
-                        label: "Shared Room",
-                        cost: 350,
-                        qol: -1,
-                        desc: "$700/mo total",
-                    }, // cost is per paycheck (2 weeks)
-                    {
-                        id: "apt",
-                        label: "1BR Apartment",
-                        cost: 800,
-                        qol: 2,
-                        desc: "$1600/mo total",
-                    },
-                    {
-                        id: "lux",
-                        label: "Luxury Loft",
-                        cost: 1100,
-                        qol: 5,
-                        desc: "$2200/mo total",
-                    },
+                    { id: "shared", label: "Shared Room", cost: 350 },
+                    { id: "apt", label: "1BR Apt", cost: 800 },
+                    { id: "lux", label: "Luxury Loft", cost: 1100 },
                 ],
             };
 
@@ -542,175 +476,68 @@
                 cards: [],
             };
 
-            /* --- INITIALIZATION --- */
+            // --- INIT ---
             function init() {
-                // Populate Difficulty
                 const dContainer = document.getElementById("diff-options");
                 CONFIG.difficulties.forEach((d) => {
-                    dContainer.innerHTML += `
-            <div class="select-card" onclick="selectDiff('${d.id}', this)">
-                <h3>${d.label}</h3>
-                <p>Pay: $${d.pay} / 2wks</p>
-                <small>${d.desc}</small>
-            </div>
-        `;
+                    dContainer.innerHTML += `<div class="select-card" onclick="setDiff('${d.id}')"><h3>${d.label}</h3><p>$${d.pay}</p></div>`;
                 });
             }
 
-            let tempDiff = null;
-
-            function selectDiff(id, el) {
-                tempDiff = CONFIG.difficulties.find((d) => d.id === id);
+            function setDiff(id) {
+                state.job = CONFIG.difficulties.find((d) => d.id === id);
+                document.getElementById("setup-step-1").classList.add("hidden");
                 document
-                    .querySelectorAll("#diff-options .select-card")
-                    .forEach((c) => c.classList.remove("selected"));
-                el.classList.add("selected");
+                    .getElementById("setup-step-2")
+                    .classList.remove("hidden");
 
-                setTimeout(() => {
-                    state.job = tempDiff;
-                    document
-                        .getElementById("setup-step-1")
-                        .classList.add("hidden");
-                    document
-                        .getElementById("setup-step-2")
-                        .classList.remove("hidden");
-                    renderHousing();
-                }, 300);
-            }
-
-            function renderHousing() {
                 const hContainer = document.getElementById("housing-options");
-                hContainer.innerHTML = "";
                 CONFIG.housing.forEach((h) => {
-                    hContainer.innerHTML += `
-            <div class="select-card" onclick="selectHousing('${h.id}', this)">
-                <h3>${h.label}</h3>
-                <p>Cost: $${h.cost} / 2wks</p>
-                <small>${h.desc}</small>
-            </div>
-        `;
+                    hContainer.innerHTML += `<div class="select-card" onclick="setHousing('${h.id}')"><h3>${h.label}</h3><p>$${h.cost}</p></div>`;
                 });
             }
 
-            function selectHousing(id, el) {
+            function setHousing(id) {
                 state.home = CONFIG.housing.find((h) => h.id === id);
-                document
-                    .querySelectorAll("#housing-options .select-card")
-                    .forEach((c) => c.classList.remove("selected"));
-                el.classList.add("selected");
-
-                setTimeout(() => {
-                    document
-                        .getElementById("setup-modal")
-                        .classList.add("hidden");
-                    state.cash = 500; // Signing bonus
-                    startRound();
-                }, 300);
+                document.getElementById("setup-modal").classList.add("hidden");
+                state.cash = 500;
+                startRound();
             }
 
-            /* --- GAME LOOP --- */
-
+            // --- ROUND LOGIC ---
             function startRound() {
-                // 1. Add Income
                 state.cash += state.job.pay;
                 showToast(`Payday! +$${state.job.pay}`);
-
-                // 2. Generate Expenses
                 generateCards();
-
-                // 3. Update UI
-                updateHeader();
-                renderBoard();
+                renderAll();
             }
 
             function generateCards() {
                 state.cards = [];
+                addCard("fixed", "Rent", state.home.cost);
+                if (state.round % 2 === 0) addCard("fixed", "Utilities", 120);
+                addCard("var", "Groceries", 200);
+                addCard("var", "Fun / Ent", 100);
+                addCard("goal", "Emergency Fund", 100, true); // true = optional
 
-                // Fixed: Rent (Per Paycheck for simplicity in this visual model)
-                addCard(
-                    "fixed",
-                    "Rent Payment",
-                    state.home.cost,
-                    "Bi-weekly rent portion",
-                );
-
-                // Fixed: Utilities (Randomish)
-                if (state.round % 2 === 0) {
-                    addCard("fixed", "Utilities", 120, "Internet & Electric");
-                }
-
-                // Variable: Groceries
-                addCard("var", "Groceries", 200, "Food for 2 weeks");
-
-                // Goals: Savings
-                addCard(
-                    "goal",
-                    "Emergency Fund",
-                    100,
-                    "Save for rainy day",
-                    true,
-                ); // True means optional/infinite top up
-
-                // Events (Random)
-                if (Math.random() > 0.6) {
-                    const bad = Math.random() > 0.5;
-                    if (bad)
-                        addCard(
-                            "event",
-                            "Parking Ticket",
-                            40,
-                            "Downtown Madison parking...",
-                        );
-                    else
-                        addCard(
-                            "opp",
-                            "Side Gig",
-                            -100,
-                            "Earn extra cash!",
-                            false,
-                            true,
-                        ); // Negative cost = Income opp
-                }
-
-                // Variable: Fun (QoL)
-                addCard("var", "Entertainment", 100, "State St. Dinner", true);
+                if (Math.random() > 0.7)
+                    addCard("event", "Speeding Ticket", 150);
             }
 
-            function addCard(
-                type,
-                title,
-                amount,
-                desc,
-                isOptional = false,
-                isIncome = false,
-            ) {
+            function addCard(type, title, amount, optional = false) {
                 state.cards.push({
                     id: Date.now() + Math.random(),
                     type,
                     title,
                     amount,
-                    desc,
-                    paid: 0,
-                    originalAmount: Math.abs(amount),
-                    isOptional,
-                    isIncome, // If true, paying it gives money
-                    completed: false,
+                    payments: [], // NEW: Track specific bills dropped here
+                    optional,
                 });
             }
 
-            function updateHeader() {
-                document.getElementById("ui-round").innerText = state.round;
-                document.getElementById("ui-cash").innerText = `$${state.cash}`;
-                document.getElementById(
-                    "ui-debt",
-                ).innerText = `-$${state.debt}`;
-                document.getElementById("ui-qol").innerText = state.qol;
-            }
-
-            /* --- DRAG AND DROP LOGIC --- */
-
+            // --- DRAG & DROP & UNDO ---
             function drag(ev) {
-                ev.dataTransfer.setData("value", ev.target.dataset.val);
+                ev.dataTransfer.setData("val", ev.target.dataset.val);
                 ev.dataTransfer.setData("type", ev.target.dataset.type);
             }
 
@@ -718,7 +545,6 @@
                 ev.preventDefault();
                 ev.currentTarget.classList.add("hover");
             }
-
             function leaveDrop(ev) {
                 ev.currentTarget.classList.remove("hover");
             }
@@ -727,76 +553,75 @@
                 ev.preventDefault();
                 ev.currentTarget.classList.remove("hover");
 
-                const valStr = ev.dataTransfer.getData("value");
-                const type = ev.dataTransfer.getData("type");
-
                 let card = state.cards.find((c) => c.id == cardId);
-                if (!card || card.completed) return;
+                let valStr = ev.dataTransfer.getData("val");
+                let type = ev.dataTransfer.getData("type");
 
-                // Logic for Credit Card
-                if (type === "credit") {
-                    if (card.isIncome) {
-                        showToast("Can't use credit for income opportunities!");
-                        return;
-                    }
-                    if (card.type === "goal") {
-                        showToast("Can't use credit for savings!");
-                        return;
-                    }
+                // Calculate current total paid
+                let currentPaid = card.payments.reduce(
+                    (sum, p) => sum + p.amount,
+                    0,
+                );
+                let remaining = card.amount - currentPaid;
 
-                    const remaining = card.originalAmount - card.paid;
-                    state.debt += remaining;
-                    card.paid = card.originalAmount;
-                    checkCardCompletion(card);
-                    showToast(`Paid $${remaining} with Credit`);
+                if (remaining <= 0 && !card.optional) {
+                    showToast("Card already paid!");
+                    return;
                 }
-                // Logic for Cash
-                else {
-                    let amount = parseInt(valStr);
+
+                let amount = 0;
+
+                if (type === "credit") {
+                    if (card.type === "goal") {
+                        showToast("Can't save with credit!");
+                        return;
+                    }
+                    amount = remaining; // Credit pays full remainder
+                    state.debt += amount;
+                } else {
+                    amount = parseInt(valStr);
                     if (state.cash < amount) {
                         showToast("Not enough cash!");
                         return;
                     }
-
-                    // Apply payment
-                    if (card.isIncome) {
-                        // "Paying" an income card means investing small money to get big money?
-                        // Simplified: Dropping money on income card = completing it?
-                        // Let's assume Income Opps auto-complete or require small investment.
-                        // For this demo: Dropping $1 on Side Gig completes it and gives $100
-                        showToast(
-                            "Opportunity logic not fully implemented in demo",
-                        );
-                        return;
-                    }
-
-                    const remaining = card.originalAmount - card.paid;
-                    const payment = Math.min(amount, remaining); // Don't overpay
-
-                    state.cash -= payment;
-                    card.paid += payment;
-
-                    checkCardCompletion(card);
+                    state.cash -= amount;
                 }
 
+                // ADD PAYMENT TO STACK (The Undo Hook)
+                card.payments.push({
+                    id: Date.now(),
+                    amount: amount,
+                    type: type,
+                });
+
+                renderAll();
+            }
+
+            // NEW: Undo Function
+            function removePayment(cardId, paymentId) {
+                let card = state.cards.find((c) => c.id == cardId);
+                let payIdx = card.payments.findIndex((p) => p.id == paymentId);
+
+                if (payIdx === -1) return;
+
+                let payment = card.payments[payIdx];
+
+                // Refund
+                if (payment.type === "credit") {
+                    state.debt -= payment.amount;
+                } else {
+                    state.cash += payment.amount;
+                }
+
+                // Remove from stack
+                card.payments.splice(payIdx, 1);
+
+                renderAll();
+            }
+
+            // --- RENDER ---
+            function renderAll() {
                 updateHeader();
-                renderBoard(); // Re-render to show progress
-            }
-
-            function checkCardCompletion(card) {
-                if (card.paid >= card.originalAmount) {
-                    card.completed = true;
-                    if (card.type === "goal") {
-                        state.qol += 2;
-                        showToast("Goal Reached! QoL +2");
-                    }
-                }
-            }
-
-            /* --- RENDERING BOARD --- */
-
-            function renderBoard() {
-                // Clear Columns
                 ["fixed", "var", "goal", "event", "opp"].forEach((t) => {
                     document.getElementById(`col-${t}-content`).innerHTML = "";
                     document.getElementById(`count-${t}`).innerText = `(${
@@ -804,55 +629,81 @@
                     })`;
                 });
 
-                // Render Cards
                 state.cards.forEach((card) => {
-                    const remaining = card.originalAmount - card.paid;
-                    const progress = (card.paid / card.originalAmount) * 100;
+                    let paid = card.payments.reduce(
+                        (sum, p) => sum + p.amount,
+                        0,
+                    );
+                    let progress = Math.min(100, (paid / card.amount) * 100);
+                    let isDone = paid >= card.amount;
 
-                    let statusText = `$${remaining} Left`;
-                    if (card.completed) statusText = "PAID";
+                    // Generate Mini-Bills HTML
+                    let stackHtml = card.payments
+                        .map((p) => {
+                            let colorClass = "";
+                            if (p.type === "credit") colorClass = "card-credit";
+                            else if (p.amount === 100) colorClass = "bill-100";
+                            else if (p.amount === 50) colorClass = "bill-50";
+                            else if (p.amount === 10) colorClass = "bill-10";
+                            else colorClass = "bill-1";
 
-                    const html = `
-            <div class="game-card ${card.type} ${card.completed ? "paid" : ""}">
+                            return `<div class="mini-bill ${colorClass}" onclick="removePayment(${
+                                card.id
+                            }, ${p.id})">
+                        ${p.type === "credit" ? "Cred" : "$" + p.amount}
+                    </div>`;
+                        })
+                        .join("");
+
+                    let html = `
+            <div class="game-card ${card.type} ${isDone ? "paid-full" : ""}">
                 <div class="card-top">
                     <span class="card-title">${card.title}</span>
-                    <span class="card-amount">$${card.originalAmount}</span>
+                    <span style="font-weight:bold">$${card.amount}</span>
                 </div>
-                <div class="card-meta">📅 Due this week</div>
                 
                 ${
-                    !card.completed
+                    !isDone
                         ? `
-                <div class="drop-zone" 
-                     ondrop="drop(event, ${card.id})" 
-                     ondragover="allowDrop(event)"
-                     ondragleave="leaveDrop(event)">
-                    Drop bills here to pay
-                </div>
-                `
-                        : '<div style="color:var(--money-green); font-weight:bold; text-align:center;">✓ COMPLETE</div>'
+                <div class="drop-zone" ondrop="drop(event, ${card.id})" ondragover="allowDrop(event)" ondragleave="leaveDrop(event)">
+                    Drop Here
+                </div>`
+                        : ""
                 }
+
+                <div class="payment-stack">
+                    ${stackHtml}
+                </div>
 
                 <div class="card-progress">
                     <div class="card-progress-bar" style="width: ${progress}%"></div>
                 </div>
                 <div style="text-align:right; font-size:0.8rem; margin-top:4px; color:#666;">
-                    ${statusText}
+                    ${isDone ? "Paid!" : `$${card.amount - paid} left`}
                 </div>
             </div>
         `;
-
                     document.getElementById(
                         `col-${card.type}-content`,
                     ).innerHTML += html;
                 });
             }
 
+            function updateHeader() {
+                document.getElementById("ui-round").innerText = state.round;
+                document.getElementById("ui-cash").innerText = `$${state.cash}`;
+                document.getElementById("ui-debt").innerText = `$${state.debt}`;
+                document.getElementById("ui-qol").innerText = state.qol;
+            }
+
             function nextRound() {
-                // Check for unpaid fixed expenses
-                const unpaidFixed = state.cards.filter(
-                    (c) => c.type === "fixed" && !c.completed,
+                // Check unpaid fixed
+                let unpaidFixed = state.cards.filter(
+                    (c) =>
+                        c.type === "fixed" &&
+                        c.payments.reduce((s, p) => s + p.amount, 0) < c.amount,
                 );
+
                 if (unpaidFixed.length > 0) {
                     if (
                         !confirm(
@@ -861,19 +712,17 @@
                     )
                         return;
                     unpaidFixed.forEach((c) => {
-                        const rem = c.originalAmount - c.paid;
-                        state.debt += rem + 50; // Penalty
+                        let paid = c.payments.reduce((s, p) => s + p.amount, 0);
+                        state.debt += c.amount - paid + 50;
                         state.qol -= 5;
                     });
                 }
 
                 state.round++;
                 if (state.round > 26) {
-                    alert("Year complete! Final Score: " + state.qol);
+                    alert("Game Over! QoL: " + state.qol);
                     location.reload();
-                } else {
-                    startRound();
-                }
+                } else startRound();
             }
 
             function showToast(msg) {
@@ -883,7 +732,6 @@
                 setTimeout(() => (t.style.opacity = 0), 2000);
             }
 
-            // Start
             init();
         </script>
     </body>
