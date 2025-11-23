@@ -244,6 +244,11 @@
                 font-weight: bold;
                 font-size: 0.9rem;
             }
+            .card-note {
+                font-size: 0.75rem;
+                color: #777;
+                margin-bottom: 4px;
+            }
 
             .drop-zone {
                 border: 2px dashed #ccc;
@@ -475,6 +480,8 @@
                 ],
             };
 
+            const WINTER_ROUNDS = new Set([1, 2, 3, 4, 22, 23, 24, 25, 26]);
+
             let state = {
                 round: 1,
                 cash: 0,
@@ -482,10 +489,62 @@
                 qol: 50,
                 savings: 0,
                 debtRecords: [],
+                coverage: { health: false },
+                flags: {
+                    rentHiked: false,
+                    sideHustleUnlocked: false,
+                    bootcampDone: false,
+                    dentalMisses: 0,
+                    dentalBombPending: false,
+                    layoffRoundsLeft: 0,
+                    lastPerformanceReview: 0,
+                    varDeficitStreak: 0,
+                },
+                eventLog: [],
                 job: null,
                 home: null,
                 cards: [],
             };
+
+            function isWinter(round) {
+                const r = ((round - 1) % 26) + 1;
+                return WINTER_ROUNDS.has(r);
+            }
+
+            function adjustQoL(delta) {
+                state.qol = Math.max(0, Math.min(100, state.qol + delta));
+            }
+
+            function ageCards() {
+                state.cards = state.cards
+                    .map((c) => ({
+                        ...c,
+                        roundsLeft: (c.roundsLeft || 1) - 1,
+                    }))
+                    .filter((c) => c.roundsLeft > 0);
+            }
+
+            function evaluateVariableSpending() {
+                const varCards = state.cards.filter((c) => c.type === "var");
+                const target = varCards.reduce((s, c) => s + c.amount, 0);
+                const paid = varCards.reduce(
+                    (s, c) =>
+                        s +
+                        c.payments.reduce((pSum, p) => pSum + p.amount, 0),
+                    0,
+                );
+                const deficit = Math.max(0, target - paid);
+
+                if (deficit > 0) {
+                    state.flags.varDeficitStreak += 1;
+                    // QoL only starts dropping after missing variable spend for 2 consecutive rounds
+                    if (state.flags.varDeficitStreak >= 2) {
+                        adjustQoL(-3);
+                    }
+                } else {
+                    state.flags.varDeficitStreak = 0;
+                }
+            }
 
             // --- DEBT HELPERS ---
             function recordDebt(amount, reason, meta = {}) {
@@ -538,32 +597,369 @@
 
             // --- ROUND LOGIC ---
             function startRound() {
-                state.cash += state.job.pay;
-                showToast(`Payday! +$${state.job.pay}`);
+                if (state.flags.layoffRoundsLeft > 0) {
+                    state.flags.layoffRoundsLeft -= 1;
+                    showToast("Layoff: No paycheck this round.");
+                } else {
+                    state.cash += state.job.pay;
+                    showToast(`Payday! +$${state.job.pay}`);
+                }
+                ageCards();
                 generateCards();
+                triggerEvents();
                 renderAll();
             }
 
+            const OPP_UNLOCK_ROUND = 4;
+            const EVENT_UNLOCK_ROUND = 6;
+
+            function hasActiveCard(title) {
+                return state.cards.some((c) => c.title === title);
+            }
+
             function generateCards() {
-                state.cards = [];
-                if (state.round % 4 === 1) addCard("fixed", "Rent", state.home.cost);
-                if (state.round % 4 === 1) addCard("fixed", "Utilities", 120);
+                if (state.round % 4 === 1 && !hasActiveCard("Rent"))
+                    addCard("fixed", "Rent", state.home.cost, false, {
+                        roundsLeft: 2,
+                    });
+                if (state.round % 4 === 1 && !hasActiveCard("Utilities"))
+                    addCard("fixed", "Utilities", 120, false, { roundsLeft: 2 });
+                if (state.round % 4 === 1 && !hasActiveCard("Car Payment"))
+                    addCard("fixed", "Car Payment", 300, false, {
+                        note: "Monthly auto loan.",
+                        roundsLeft: 2,
+                    });
                 addCard("var", "Groceries", 200);
                 addCard("var", "Fun / Entertainment", 100);
-                addCard("goal", "Emergency Fund", 100, true); // true = optional
+                addCard("var", "Gas & Transit", 120);
+                addCard("var", "Dining Out", 120, true);
+                addCard("goal", "Emergency Fund / Savings", 100, true); // true = optional
+                addCard("goal", "Vacation Fund", 50, true);
+                addCard("goal", "Retirement Contribution", 150, true, {
+                    note: "Long-term benefit; optional contribution.",
+                });
 
-                if (Math.random() > 0.7)
+                if (state.round >= OPP_UNLOCK_ROUND) {
+                    // Preventive care
+                    if (state.round % 3 === 1) {
+                        addCard(
+                            "opp",
+                            "Dental Checkup",
+                            80,
+                            true,
+                            {
+                                note: "Small cost now to avoid big dental bill later.",
+                                trackKey: "dentalCheck",
+                            },
+                        );
+                    }
+
+                    // Insurance flow
+                    if (!state.coverage.health) {
+                        addCard(
+                            "opp",
+                            "Enroll: Health Insurance",
+                            150,
+                            true,
+                            {
+                                note: "Pay once to unlock health coverage; monthly premiums will appear.",
+                                onPaid: () => {
+                                    state.coverage.health = true;
+                                    showToast("Health insurance activated. Premium will recur.");
+                                },
+                            },
+                        );
+                    } else {
+                        if (!hasActiveCard("Health Insurance Premium")) {
+                            addCard(
+                                "fixed",
+                                "Health Insurance Premium",
+                                150,
+                                false,
+                                {
+                                    note: "Keeps medical events cheaper.",
+                                    roundsLeft: 2,
+                                },
+                            );
+                        }
+                    }
+
+                    // Career growth
+                    if (!state.flags.bootcampDone && state.round > 4) {
+                        addCard(
+                            "opp",
+                            "Skill Bootcamp",
+                            300,
+                            true,
+                            {
+                                note: "Invest in skills; raises salary ~10%.",
+                                onPaid: () => {
+                                    state.flags.bootcampDone = true;
+                                    state.job.pay = Math.round(state.job.pay * 1.1);
+                                    adjustQoL(-3);
+                                    showToast("Bootcamp complete! Salary bumped.");
+                                },
+                            },
+                        );
+                    }
+                    if (state.round % 6 === 1) {
+                        addCard(
+                            "opp",
+                            "Ask for a Raise",
+                            1,
+                            true,
+                            {
+                                note: "Drop a $1 bill to try for +5-10% salary.",
+                                onPaid: () => {
+                                    const delta = Math.random() < 0.5 ? 0.05 : 0.1;
+                                    state.job.pay = Math.round(state.job.pay * (1 + delta));
+                                    adjustQoL(-1);
+                                    showToast("Negotiation paid off with a raise!");
+                                },
+                            },
+                        );
+                    }
+
+                    // Side hustle
+                    if (!state.flags.sideHustleUnlocked && state.round > 2) {
+                        addCard(
+                            "opp",
+                            "Start a Side Hustle",
+                            200,
+                            true,
+                            {
+                                note: "Upfront setup. Unlocks future shift card (+$150, QoL -2).",
+                                onPaid: () => {
+                                    state.flags.sideHustleUnlocked = true;
+                                    adjustQoL(-2);
+                                    showToast("Side hustle unlocked.");
+                                },
+                            },
+                        );
+                    } else if (state.flags.sideHustleUnlocked) {
+                        addCard(
+                            "opp",
+                            "Take a Side Hustle Shift",
+                            1,
+                            true,
+                            {
+                                note: "Drop a $1 bill to spend time. Gain $150, QoL -2.",
+                                onPaid: () => {
+                                    state.cash += 150;
+                                    adjustQoL(-2);
+                                    showToast("Side hustle shift paid $150.");
+                                },
+                            },
+                        );
+                    }
+                }
+
+                // Pending consequence from skipping care
+                if (state.flags.dentalBombPending) {
+                    addCard(
+                        "event",
+                        "Dental Time Bomb",
+                        800,
+                        false,
+                        {
+                            note: "Skipping checkups caught up to you.",
+                            debtOnMiss: 800,
+                        },
+                    );
+                    adjustQoL(-3);
+                    state.flags.dentalBombPending = false;
+                }
+
+                if (state.round >= EVENT_UNLOCK_ROUND && Math.random() > 0.7)
                     addCard("event", "Speeding Ticket", 150);
             }
 
-            function addCard(type, title, amount, optional = false) {
+            const EVENT_DECK = [
+                {
+                    id: "slip-ice",
+                    trigger: (s) => isWinter(s.round) && Math.random() < 0.18,
+                    effect: () => {
+                        if (state.coverage.health) {
+                            addCard(
+                                "event",
+                                "Slip on the Ice (Copay)",
+                                100,
+                                false,
+                                {
+                                    note: "Health insurance covers the rest.",
+                                    debtOnMiss: 100,
+                                },
+                            );
+                            adjustQoL(-3);
+                            addEventLog("Insurance softened a medical event.");
+                        } else {
+                            addCard(
+                                "event",
+                                "Medical Bill: Slip on the Ice",
+                                3000,
+                                false,
+                                {
+                                    note: "No health insurance. Big bill hits.",
+                                    debtOnMiss: 3000,
+                                },
+                            );
+                            adjustQoL(-5);
+                            addEventLog("No insurance made a winter fall expensive.");
+                        }
+                    },
+                },
+                {
+                    id: "heating-spike",
+                    trigger: (s) => isWinter(s.round) && Math.random() < 0.12,
+                    effect: () => {
+                        addCard(
+                            "event",
+                            "Winter Heating Spike",
+                            80,
+                            false,
+                            {
+                                note: "Cold snap drove utilities up this round.",
+                                debtOnMiss: 80,
+                            },
+                        );
+                        addEventLog("Seasonal heating costs spiked.");
+                    },
+                },
+                {
+                    id: "unexpected-bonus",
+                    trigger: () => Math.random() < 0.08,
+                    effect: () => {
+                        state.cash += state.job.pay;
+                        showToast("Unexpected bonus! +$" + state.job.pay);
+                        addEventLog("Windfall bonus matched one paycheck.");
+                    },
+                },
+                {
+                    id: "rent-hike",
+                    trigger: (s) => !s.flags.rentHiked && s.round >= 13,
+                    effect: () => {
+                        const bump = Math.round(state.home.cost * 0.07);
+                        state.home.cost += bump;
+                        state.flags.rentHiked = true;
+                        showToast(`Rent increased by $${bump}.`);
+                        addCard(
+                            "opp",
+                            "Negotiate Rent Hike",
+                            75,
+                            true,
+                            {
+                                note: "Pay for time/effort. Success reduces increase.",
+                                onPaid: () => {
+                                    const reduction = Math.round(state.home.cost * 0.04);
+                                    state.home.cost = Math.max(
+                                        0,
+                                        state.home.cost - reduction,
+                                    );
+                                    showToast("Negotiation helped. Rent trimmed.");
+                                    addEventLog("Negotiated rent hike down.");
+                                },
+                            },
+                        );
+                        addEventLog("Lease renewal raised rent ~7%.");
+                    },
+                },
+                {
+                    id: "burnout-warning",
+                    trigger: (s) => s.qol < 35 && Math.random() < 0.15,
+                    effect: () => {
+                        const cost = Math.round(state.job.pay / 2);
+                        if (
+                            confirm(
+                                `Burnout warning! Take a mental health break (lose $${cost}, QoL +10) or push through (QoL -5)?`,
+                            )
+                        ) {
+                            state.cash = Math.max(0, state.cash - cost);
+                            adjustQoL(10);
+                            addEventLog("Took a break to avoid burnout.");
+                        } else {
+                            adjustQoL(-5);
+                            addEventLog("Pushed through burnout risk; QoL fell.");
+                        }
+                    },
+                },
+                {
+                    id: "parking-ticket",
+                    trigger: () => Math.random() < 0.1,
+                    effect: () => {
+                        addCard(
+                            "event",
+                            "Parking Ticket Blitz",
+                            60,
+                            false,
+                            { note: "Annoying fine. Pay it or it becomes debt.", debtOnMiss: 60 },
+                        );
+                        addEventLog("Parking blitz hit your wallet.");
+                    },
+                },
+                {
+                    id: "layoffs",
+                    trigger: (s) => s.round > 8 && Math.random() < 0.05,
+                    effect: () => {
+                        const dur = 2 + Math.floor(Math.random() * 3);
+                        state.flags.layoffRoundsLeft = dur;
+                        showToast(`Company layoffs: No pay for ${dur} rounds.`);
+                        addEventLog("Hit by layoffs; income paused.");
+                    },
+                },
+            ];
+
+            function addEventLog(msg) {
+                state.eventLog.push({ round: state.round, msg });
+            }
+
+            function triggerEvents() {
+                if (state.round >= EVENT_UNLOCK_ROUND) {
+                    EVENT_DECK.forEach((ev) => {
+                        if (ev.once && state.flags[ev.id]) return;
+                        if (ev.trigger(state)) {
+                            ev.effect();
+                            if (ev.once) state.flags[ev.id] = true;
+                        }
+                    });
+                }
+                if (state.round - state.flags.lastPerformanceReview >= 6) {
+                    state.flags.lastPerformanceReview = state.round;
+                    if (state.qol >= 60) {
+                        state.job.pay = Math.round(state.job.pay * 1.08);
+                        adjustQoL(2);
+                        addEventLog("Strong performance review boosted salary.");
+                        showToast("Great review! Salary up 8%.");
+                    } else if (state.qol < 40) {
+                        adjustQoL(-3);
+                        if (Math.random() < 0.3) {
+                            state.flags.layoffRoundsLeft = Math.max(
+                                state.flags.layoffRoundsLeft,
+                                1,
+                            );
+                            addEventLog("Poor review increased job risk; short furlough.");
+                        } else {
+                            addEventLog("Performance review came back lukewarm.");
+                        }
+                    } else {
+                        addEventLog("Performance review was neutral.");
+                    }
+                }
+            }
+
+            function addCard(type, title, amount, optional = false, options = {}) {
                 state.cards.push({
                     id: Date.now() + Math.random(),
                     type,
                     title,
                     amount,
-                    payments: [], // NEW: Track specific bills dropped here
+                    payments: [], // Track specific bills dropped here
                     optional,
+                    note: options.note || "",
+                    onPaid: options.onPaid || null,
+                    fulfilled: false,
+                    debtOnMiss: options.debtOnMiss || null,
+                    trackKey: options.trackKey || null,
+                    roundsLeft: options.roundsLeft || 1,
                 });
             }
 
@@ -626,6 +1022,11 @@
                     type: type,
                 });
 
+                let newPaidTotal = card.payments.reduce(
+                    (sum, p) => sum + p.amount,
+                    0,
+                );
+
                 if (type === "credit") {
                     recordDebt(
                         amount,
@@ -636,6 +1037,15 @@
 
                 if (card.type === "goal") {
                     state.savings += amount;
+                }
+
+                if (card.onPaid && !card.fulfilled && newPaidTotal >= card.amount) {
+                    card.fulfilled = true;
+                    try {
+                        card.onPaid(card);
+                    } catch (e) {
+                        console.error("onPaid handler failed", e);
+                    }
                 }
 
                 renderAll();
@@ -709,6 +1119,11 @@
                     <span class="card-title">${card.title}</span>
                     <span style="font-weight:bold">$${card.amount}</span>
                 </div>
+                ${
+                    card.note
+                        ? `<div class="card-note">${card.note}</div>`
+                        : ""
+                }
                 
                 ${
                     !isDone
@@ -757,30 +1172,60 @@
             }
 
             function nextRound() {
-                // Check unpaid fixed
-                let unpaidFixed = state.cards.filter(
-                    (c) =>
-                        c.type === "fixed" &&
-                        c.payments.reduce((s, p) => s + p.amount, 0) < c.amount,
-                );
+                // Check unpaid items that should become debt
+                let debtCards = state.cards.filter((c) => {
+                    let paid = c.payments.reduce((s, p) => s + p.amount, 0);
+                    return (
+                        paid < c.amount &&
+                        (c.type === "fixed" || c.debtOnMiss !== null) &&
+                        (c.roundsLeft || 1) <= 1
+                    );
+                });
 
-                if (unpaidFixed.length > 0) {
+                if (debtCards.length > 0) {
                     if (
                         !confirm(
-                            "You have unpaid Fixed Expenses! Proceeding will add them to debt + penalty.",
+                            "You have unpaid expenses that will become debt + penalties. Continue?",
                         )
                     )
                         return;
-                    unpaidFixed.forEach((c) => {
+                    debtCards.forEach((c) => {
                         let paid = c.payments.reduce((s, p) => s + p.amount, 0);
-                        let debtAdd = c.amount - paid + 50;
-                        recordDebt(
-                            debtAdd,
-                            `Unpaid ${c.title} (includes $50 penalty)`,
-                            { cardId: c.id },
-                        );
-                        state.qol -= 5;
+                        let baseOwed = c.amount - paid;
+                        let debtAdd =
+                            c.debtOnMiss !== null
+                                ? c.debtOnMiss
+                                : baseOwed + 50;
+                        let reason =
+                            c.type === "fixed"
+                                ? `Unpaid ${c.title} (includes $50 penalty)`
+                                : `Unpaid ${c.title} moved to debt`;
+                        recordDebt(debtAdd, reason, { cardId: c.id });
+                        adjustQoL(c.type === "fixed" ? -5 : -3);
                     });
+                }
+
+                // Variable spending QoL pressure
+                evaluateVariableSpending();
+
+                // Preventive care tracking
+                const dentalCard = state.cards.find(
+                    (c) => c.trackKey === "dentalCheck",
+                );
+                if (dentalCard) {
+                    const paid = dentalCard.payments.reduce(
+                        (s, p) => s + p.amount,
+                        0,
+                    );
+                    if (paid >= dentalCard.amount) {
+                        state.flags.dentalMisses = 0;
+                    } else {
+                        state.flags.dentalMisses += 1;
+                        if (state.flags.dentalMisses >= 2) {
+                            state.flags.dentalBombPending = true;
+                            state.flags.dentalMisses = 0;
+                        }
+                    }
                 }
 
                 state.round += 2;
