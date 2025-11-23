@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>The Badger Budget: Madison Edition</title>
+        <style>
+            :root {
+                --bg-color: #f4f5f7;
+                --header-bg: #ffffff;
+                --primary-red: #c5050c; /* UW Red */
+                --money-green: #2ecc71;
+                --money-blue: #3498db;
+                --money-yellow: #f1c40f;
+                --money-gray: #95a5a6;
+                --credit-purple: #9b59b6;
+
+                /* Column Headers */
+                --col-fixed: #f0f0f0;
+                --col-var: #e3f2fd;
+                --col-goal: #fff3e0;
+                --col-event: #e8f5e9;
+                --col-opp: #f3e5f5;
+            }
+
+            body {
+                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                background-color: var(--bg-color);
+                margin: 0;
+                padding: 0;
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden; /* Prevent full page scroll, scroll columns instead */
+            }
+
+            /* --- SETUP SCREENS --- */
+            .modal-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                z-index: 1000;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+            .modal-box {
+                background: white;
+                padding: 2rem;
+                border-radius: 12px;
+                width: 90%;
+                max-width: 600px;
+                text-align: center;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            }
+            .selection-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 15px;
+                margin-top: 20px;
+                margin-bottom: 20px;
+            }
+            .select-card {
+                border: 2px solid #ddd;
+                padding: 15px;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: 0.2s;
+            }
+            .select-card:hover {
+                border-color: var(--primary-red);
+                background: #fff5f5;
+            }
+            .select-card.selected {
+                border-color: var(--primary-red);
+                background: #ffebeb;
+                transform: scale(1.02);
+            }
+            .btn {
+                padding: 10px 20px;
+                border-radius: 6px;
+                border: none;
+                cursor: pointer;
+                font-weight: bold;
+                font-size: 1rem;
+            }
+            .btn-primary {
+                background: var(--primary-red);
+                color: white;
+            }
+            .hidden {
+                display: none !important;
+            }
+
+            /* --- HEADER & WALLET --- */
+            header {
+                background: var(--header-bg);
+                padding: 10px 20px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                z-index: 10;
+            }
+
+            .header-left,
+            .header-right {
+                display: flex;
+                gap: 15px;
+                align-items: center;
+            }
+
+            .stat-badge {
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 0.9rem;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .bg-light {
+                background: #f8f9fa;
+                border: 1px solid #ddd;
+            }
+            .bg-green-light {
+                background: #e8f5e9;
+                color: #27ae60;
+                border: 1px solid #c8e6c9;
+            }
+            .bg-red-light {
+                background: #ffebee;
+                color: #c62828;
+            }
+
+            .wallet-row {
+                background: white;
+                padding: 10px 20px;
+                border-bottom: 1px solid #ddd;
+                display: flex;
+                align-items: center;
+                gap: 20px;
+            }
+
+            .bill {
+                width: 70px;
+                height: 40px;
+                border-radius: 4px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-weight: bold;
+                color: white;
+                cursor: grab;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+                user-select: none;
+                transition: transform 0.1s;
+            }
+            .bill:active {
+                cursor: grabbing;
+                transform: scale(0.95);
+            }
+            .bill-100 {
+                background: var(--money-green);
+            }
+            .bill-50 {
+                background: var(--money-blue);
+            }
+            .bill-10 {
+                background: var(--money-yellow);
+                color: #555;
+            }
+            .bill-1 {
+                background: var(--money-gray);
+            }
+            .card-credit {
+                background: var(--credit-purple);
+                width: 90px;
+            }
+
+            /* --- KANBAN BOARD --- */
+            .board {
+                display: flex;
+                flex: 1;
+                padding: 10px;
+                gap: 10px;
+                overflow-x: auto;
+            }
+
+            .column {
+                flex: 1;
+                min-width: 200px;
+                background: white;
+                border-radius: 8px;
+                display: flex;
+                flex-direction: column;
+                border-top: 5px solid #ccc;
+            }
+
+            /* Column Specific Colors (Headers) */
+            .col-fixed {
+                border-top-color: #f1c40f;
+                background: #fffde7;
+            }
+            .col-var {
+                border-top-color: #3498db;
+                background: #e3f2fd;
+            }
+            .col-goal {
+                border-top-color: #e67e22;
+                background: #fff3e0;
+            }
+            .col-event {
+                border-top-color: #2ecc71;
+                background: #e8f5e9;
+            }
+            .col-opp {
+                border-top-color: #9b59b6;
+                background: #f3e5f5;
+            }
+
+            .col-header {
+                padding: 10px;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                font-size: 0.9rem;
+                color: #555;
+                background: rgba(255, 255, 255, 0.5);
+            }
+
+            .col-content {
+                padding: 10px;
+                flex: 1;
+                overflow-y: auto;
+            }
+
+            /* --- GAME CARDS --- */
+            .game-card {
+                background: white;
+                border: 1px solid #ddd;
+                border-left: 4px solid #ccc;
+                border-radius: 6px;
+                padding: 12px;
+                margin-bottom: 10px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+                position: relative;
+                transition: all 0.2s;
+            }
+
+            .game-card.fixed {
+                border-left-color: #f1c40f;
+            }
+            .game-card.var {
+                border-left-color: #3498db;
+            }
+            .game-card.goal {
+                border-left-color: #e67e22;
+            }
+            .game-card.event {
+                border-left-color: #2ecc71;
+            }
+            .game-card.opp {
+                border-left-color: #9b59b6;
+            }
+
+            .game-card.paid {
+                opacity: 0.6;
+                border-left-color: #2ecc71;
+                background: #f0fff4;
+            }
+
+            .card-top {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 5px;
+            }
+            .card-title {
+                font-weight: bold;
+                font-size: 0.9rem;
+            }
+            .card-amount {
+                font-weight: bold;
+                font-size: 1rem;
+            }
+
+            .card-meta {
+                font-size: 0.8rem;
+                color: #666;
+                margin-bottom: 8px;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+            }
+
+            /* The Drop Zone inside the card */
+            .drop-zone {
+                border: 2px dashed #ccc;
+                border-radius: 4px;
+                padding: 10px;
+                text-align: center;
+                font-size: 0.8rem;
+                color: #aaa;
+                transition: background 0.2s;
+            }
+            .drop-zone.hover {
+                background: #e8f5e9;
+                border-color: #2ecc71;
+                color: #2ecc71;
+            }
+
+            /* Progress Bar on Card */
+            .card-progress {
+                height: 4px;
+                background: #eee;
+                margin-top: 5px;
+                border-radius: 2px;
+                overflow: hidden;
+            }
+            .card-progress-bar {
+                height: 100%;
+                background: #2ecc71;
+                width: 0%;
+                transition: width 0.3s;
+            }
+
+            .toast {
+                position: fixed;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #333;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 20px;
+                opacity: 0;
+                transition: opacity 0.3s;
+                z-index: 2000;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="setup-modal" class="modal-overlay">
+            <div class="modal-box" id="setup-step-1">
+                <h2>Welcome to Madison! 🦡</h2>
+                <p>Choose your income level to start.</p>
+                <div class="selection-grid" id="diff-options"></div>
+            </div>
+            <div class="modal-box hidden" id="setup-step-2">
+                <h2>Where will you live?</h2>
+                <p>Rent is due every 2 weeks (half month).</p>
+                <div class="selection-grid" id="housing-options"></div>
+            </div>
+        </div>
+
+        <header>
+            <div class="header-left">
+                <h3 style="margin: 0; color: var(--primary-red)">
+                    The Badger Budget
+                </h3>
+                <div class="stat-badge bg-light">
+                    Week <span id="ui-round">1</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="stat-badge bg-green-light">
+                    <span>Balance:</span>
+                    <span id="ui-cash">$0</span>
+                </div>
+                <div class="stat-badge bg-light">
+                    <span>Credit Used:</span>
+                    <span id="ui-debt">$0</span>
+                    <span style="font-size: 0.8em; color: #999">/ $5000</span>
+                </div>
+                <div
+                    class="stat-badge"
+                    id="ui-qol-badge"
+                    style="background: #e3f2fd; color: #1565c0">
+                    QoL: <span id="ui-qol">50</span>
+                </div>
+                <button class="btn btn-primary" onclick="nextRound()">
+                    Next Round
+                </button>
+            </div>
+        </header>
+
+        <div class="wallet-row">
+            <span style="font-weight: bold; color: #555">Available Bills:</span>
+            <div
+                class="bill bill-100"
+                draggable="true"
+                ondragstart="drag(event)"
+                data-val="100"
+                data-type="cash">
+                $100
+            </div>
+            <div
+                class="bill bill-50"
+                draggable="true"
+                ondragstart="drag(event)"
+                data-val="50"
+                data-type="cash">
+                $50
+            </div>
+            <div
+                class="bill bill-10"
+                draggable="true"
+                ondragstart="drag(event)"
+                data-val="10"
+                data-type="cash">
+                $10
+            </div>
+            <div
+                class="bill bill-1"
+                draggable="true"
+                ondragstart="drag(event)"
+                data-val="1"
+                data-type="cash">
+                $1
+            </div>
+
+            <div
+                style="
+                    width: 2px;
+                    height: 30px;
+                    background: #ddd;
+                    margin: 0 10px;
+                "></div>
+
+            <div
+                class="bill card-credit"
+                draggable="true"
+                ondragstart="drag(event)"
+                data-val="ALL"
+                data-type="credit">
+                💳 Credit
+            </div>
+        </div>
+
+        <div class="board">
+            <div class="column col-fixed">
+                <div class="col-header">
+                    <span>FIXED EXPENSE</span>
+                    <span id="count-fixed">(0)</span>
+                </div>
+                <div class="col-content" id="col-fixed-content"></div>
+            </div>
+
+            <div class="column col-var">
+                <div class="col-header">
+                    <span>VARIABLE EXPENSE</span>
+                    <span id="count-var">(0)</span>
+                </div>
+                <div class="col-content" id="col-var-content"></div>
+            </div>
+
+            <div class="column col-goal">
+                <div class="col-header">
+                    <span>GOAL</span>
+                    <span id="count-goal">(0)</span>
+                </div>
+                <div class="col-content" id="col-goal-content"></div>
+            </div>
+
+            <div class="column col-event">
+                <div class="col-header">
+                    <span>EVENT</span>
+                    <span id="count-event">(0)</span>
+                </div>
+                <div class="col-content" id="col-event-content"></div>
+            </div>
+
+            <div class="column col-opp">
+                <div class="col-header">
+                    <span>OPPORTUNITY</span>
+                    <span id="count-opp">(0)</span>
+                </div>
+                <div class="col-content" id="col-opp-content"></div>
+            </div>
+        </div>
+
+        <div id="toast" class="toast">Message</div>
+
+        <script>
+            /* --- DATA & CONFIG --- */
+            const CONFIG = {
+                difficulties: [
+                    {
+                        id: "hard",
+                        label: "Entry Level",
+                        pay: 1440,
+                        desc: "$50k/yr",
+                    },
+                    {
+                        id: "med",
+                        label: "Mid-Career",
+                        pay: 2160,
+                        desc: "$75k/yr",
+                    },
+                    {
+                        id: "easy",
+                        label: "Senior Role",
+                        pay: 2880,
+                        desc: "$100k/yr",
+                    },
+                ],
+                housing: [
+                    {
+                        id: "shared",
+                        label: "Shared Room",
+                        cost: 350,
+                        qol: -1,
+                        desc: "$700/mo total",
+                    }, // cost is per paycheck (2 weeks)
+                    {
+                        id: "apt",
+                        label: "1BR Apartment",
+                        cost: 800,
+                        qol: 2,
+                        desc: "$1600/mo total",
+                    },
+                    {
+                        id: "lux",
+                        label: "Luxury Loft",
+                        cost: 1100,
+                        qol: 5,
+                        desc: "$2200/mo total",
+                    },
+                ],
+            };
+
+            let state = {
+                round: 1,
+                cash: 0,
+                debt: 0,
+                qol: 50,
+                job: null,
+                home: null,
+                cards: [],
+            };
+
+            /* --- INITIALIZATION --- */
+            function init() {
+                // Populate Difficulty
+                const dContainer = document.getElementById("diff-options");
+                CONFIG.difficulties.forEach((d) => {
+                    dContainer.innerHTML += `
+            <div class="select-card" onclick="selectDiff('${d.id}', this)">
+                <h3>${d.label}</h3>
+                <p>Pay: $${d.pay} / 2wks</p>
+                <small>${d.desc}</small>
+            </div>
+        `;
+                });
+            }
+
+            let tempDiff = null;
+
+            function selectDiff(id, el) {
+                tempDiff = CONFIG.difficulties.find((d) => d.id === id);
+                document
+                    .querySelectorAll("#diff-options .select-card")
+                    .forEach((c) => c.classList.remove("selected"));
+                el.classList.add("selected");
+
+                setTimeout(() => {
+                    state.job = tempDiff;
+                    document
+                        .getElementById("setup-step-1")
+                        .classList.add("hidden");
+                    document
+                        .getElementById("setup-step-2")
+                        .classList.remove("hidden");
+                    renderHousing();
+                }, 300);
+            }
+
+            function renderHousing() {
+                const hContainer = document.getElementById("housing-options");
+                hContainer.innerHTML = "";
+                CONFIG.housing.forEach((h) => {
+                    hContainer.innerHTML += `
+            <div class="select-card" onclick="selectHousing('${h.id}', this)">
+                <h3>${h.label}</h3>
+                <p>Cost: $${h.cost} / 2wks</p>
+                <small>${h.desc}</small>
+            </div>
+        `;
+                });
+            }
+
+            function selectHousing(id, el) {
+                state.home = CONFIG.housing.find((h) => h.id === id);
+                document
+                    .querySelectorAll("#housing-options .select-card")
+                    .forEach((c) => c.classList.remove("selected"));
+                el.classList.add("selected");
+
+                setTimeout(() => {
+                    document
+                        .getElementById("setup-modal")
+                        .classList.add("hidden");
+                    state.cash = 500; // Signing bonus
+                    startRound();
+                }, 300);
+            }
+
+            /* --- GAME LOOP --- */
+
+            function startRound() {
+                // 1. Add Income
+                state.cash += state.job.pay;
+                showToast(`Payday! +$${state.job.pay}`);
+
+                // 2. Generate Expenses
+                generateCards();
+
+                // 3. Update UI
+                updateHeader();
+                renderBoard();
+            }
+
+            function generateCards() {
+                state.cards = [];
+
+                // Fixed: Rent (Per Paycheck for simplicity in this visual model)
+                addCard(
+                    "fixed",
+                    "Rent Payment",
+                    state.home.cost,
+                    "Bi-weekly rent portion",
+                );
+
+                // Fixed: Utilities (Randomish)
+                if (state.round % 2 === 0) {
+                    addCard("fixed", "Utilities", 120, "Internet & Electric");
+                }
+
+                // Variable: Groceries
+                addCard("var", "Groceries", 200, "Food for 2 weeks");
+
+                // Goals: Savings
+                addCard(
+                    "goal",
+                    "Emergency Fund",
+                    100,
+                    "Save for rainy day",
+                    true,
+                ); // True means optional/infinite top up
+
+                // Events (Random)
+                if (Math.random() > 0.6) {
+                    const bad = Math.random() > 0.5;
+                    if (bad)
+                        addCard(
+                            "event",
+                            "Parking Ticket",
+                            40,
+                            "Downtown Madison parking...",
+                        );
+                    else
+                        addCard(
+                            "opp",
+                            "Side Gig",
+                            -100,
+                            "Earn extra cash!",
+                            false,
+                            true,
+                        ); // Negative cost = Income opp
+                }
+
+                // Variable: Fun (QoL)
+                addCard("var", "Entertainment", 100, "State St. Dinner", true);
+            }
+
+            function addCard(
+                type,
+                title,
+                amount,
+                desc,
+                isOptional = false,
+                isIncome = false,
+            ) {
+                state.cards.push({
+                    id: Date.now() + Math.random(),
+                    type,
+                    title,
+                    amount,
+                    desc,
+                    paid: 0,
+                    originalAmount: Math.abs(amount),
+                    isOptional,
+                    isIncome, // If true, paying it gives money
+                    completed: false,
+                });
+            }
+
+            function updateHeader() {
+                document.getElementById("ui-round").innerText = state.round;
+                document.getElementById("ui-cash").innerText = `$${state.cash}`;
+                document.getElementById(
+                    "ui-debt",
+                ).innerText = `-$${state.debt}`;
+                document.getElementById("ui-qol").innerText = state.qol;
+            }
+
+            /* --- DRAG AND DROP LOGIC --- */
+
+            function drag(ev) {
+                ev.dataTransfer.setData("value", ev.target.dataset.val);
+                ev.dataTransfer.setData("type", ev.target.dataset.type);
+            }
+
+            function allowDrop(ev) {
+                ev.preventDefault();
+                ev.currentTarget.classList.add("hover");
+            }
+
+            function leaveDrop(ev) {
+                ev.currentTarget.classList.remove("hover");
+            }
+
+            function drop(ev, cardId) {
+                ev.preventDefault();
+                ev.currentTarget.classList.remove("hover");
+
+                const valStr = ev.dataTransfer.getData("value");
+                const type = ev.dataTransfer.getData("type");
+
+                let card = state.cards.find((c) => c.id == cardId);
+                if (!card || card.completed) return;
+
+                // Logic for Credit Card
+                if (type === "credit") {
+                    if (card.isIncome) {
+                        showToast("Can't use credit for income opportunities!");
+                        return;
+                    }
+                    if (card.type === "goal") {
+                        showToast("Can't use credit for savings!");
+                        return;
+                    }
+
+                    const remaining = card.originalAmount - card.paid;
+                    state.debt += remaining;
+                    card.paid = card.originalAmount;
+                    checkCardCompletion(card);
+                    showToast(`Paid $${remaining} with Credit`);
+                }
+                // Logic for Cash
+                else {
+                    let amount = parseInt(valStr);
+                    if (state.cash < amount) {
+                        showToast("Not enough cash!");
+                        return;
+                    }
+
+                    // Apply payment
+                    if (card.isIncome) {
+                        // "Paying" an income card means investing small money to get big money?
+                        // Simplified: Dropping money on income card = completing it?
+                        // Let's assume Income Opps auto-complete or require small investment.
+                        // For this demo: Dropping $1 on Side Gig completes it and gives $100
+                        showToast(
+                            "Opportunity logic not fully implemented in demo",
+                        );
+                        return;
+                    }
+
+                    const remaining = card.originalAmount - card.paid;
+                    const payment = Math.min(amount, remaining); // Don't overpay
+
+                    state.cash -= payment;
+                    card.paid += payment;
+
+                    checkCardCompletion(card);
+                }
+
+                updateHeader();
+                renderBoard(); // Re-render to show progress
+            }
+
+            function checkCardCompletion(card) {
+                if (card.paid >= card.originalAmount) {
+                    card.completed = true;
+                    if (card.type === "goal") {
+                        state.qol += 2;
+                        showToast("Goal Reached! QoL +2");
+                    }
+                }
+            }
+
+            /* --- RENDERING BOARD --- */
+
+            function renderBoard() {
+                // Clear Columns
+                ["fixed", "var", "goal", "event", "opp"].forEach((t) => {
+                    document.getElementById(`col-${t}-content`).innerHTML = "";
+                    document.getElementById(`count-${t}`).innerText = `(${
+                        state.cards.filter((c) => c.type === t).length
+                    })`;
+                });
+
+                // Render Cards
+                state.cards.forEach((card) => {
+                    const remaining = card.originalAmount - card.paid;
+                    const progress = (card.paid / card.originalAmount) * 100;
+
+                    let statusText = `$${remaining} Left`;
+                    if (card.completed) statusText = "PAID";
+
+                    const html = `
+            <div class="game-card ${card.type} ${card.completed ? "paid" : ""}">
+                <div class="card-top">
+                    <span class="card-title">${card.title}</span>
+                    <span class="card-amount">$${card.originalAmount}</span>
+                </div>
+                <div class="card-meta">📅 Due this week</div>
+                
+                ${
+                    !card.completed
+                        ? `
+                <div class="drop-zone" 
+                     ondrop="drop(event, ${card.id})" 
+                     ondragover="allowDrop(event)"
+                     ondragleave="leaveDrop(event)">
+                    Drop bills here to pay
+                </div>
+                `
+                        : '<div style="color:var(--money-green); font-weight:bold; text-align:center;">✓ COMPLETE</div>'
+                }
+
+                <div class="card-progress">
+                    <div class="card-progress-bar" style="width: ${progress}%"></div>
+                </div>
+                <div style="text-align:right; font-size:0.8rem; margin-top:4px; color:#666;">
+                    ${statusText}
+                </div>
+            </div>
+        `;
+
+                    document.getElementById(
+                        `col-${card.type}-content`,
+                    ).innerHTML += html;
+                });
+            }
+
+            function nextRound() {
+                // Check for unpaid fixed expenses
+                const unpaidFixed = state.cards.filter(
+                    (c) => c.type === "fixed" && !c.completed,
+                );
+                if (unpaidFixed.length > 0) {
+                    if (
+                        !confirm(
+                            "You have unpaid Fixed Expenses! Proceeding will add them to debt + penalty.",
+                        )
+                    )
+                        return;
+                    unpaidFixed.forEach((c) => {
+                        const rem = c.originalAmount - c.paid;
+                        state.debt += rem + 50; // Penalty
+                        state.qol -= 5;
+                    });
+                }
+
+                state.round++;
+                if (state.round > 26) {
+                    alert("Year complete! Final Score: " + state.qol);
+                    location.reload();
+                } else {
+                    startRound();
+                }
+            }
+
+            function showToast(msg) {
+                const t = document.getElementById("toast");
+                t.innerText = msg;
+                t.style.opacity = 1;
+                setTimeout(() => (t.style.opacity = 0), 2000);
+            }
+
+            // Start
+            init();
+        </script>
+    </body>
+</html>
