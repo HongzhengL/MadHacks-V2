@@ -62,6 +62,14 @@ body {
     border-color: var(--primary-red);
     background: #fff5f5;
 }
+.select-card.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.select-card.disabled:hover {
+    border-color: #ddd;
+    background: white;
+}
 
 /* --- HEADER --- */
 header {
@@ -153,6 +161,48 @@ header {
     color: #1565c0;
     min-width: 28px;
     text-align: right;
+}
+.credit-badge {
+    min-width: 160px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    cursor: default;
+    transition: box-shadow 0.2s ease;
+}
+.credit-badge.excellent {
+    background: #e8f5e9;
+    border-color: #c8e6c9;
+}
+.credit-badge.fair {
+    background: #fff7e6;
+    border-color: #fcd34d;
+}
+.credit-badge.poor {
+    background: #fdecec;
+    border-color: #fca5a5;
+}
+.credit-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.credit-delta {
+    font-weight: 800;
+    font-size: 0.9rem;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.credit-delta.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+.credit-delta.positive {
+    color: #16a34a;
+}
+.credit-delta.negative {
+    color: #b91c1c;
 }
 
 /* --- WALLET --- */

@@ -1,8 +1,8 @@
 const CONFIG = {
     difficulties: [
-        { id: "hard", label: "Entry Level", pay: 1100 },
-        { id: "med", label: "Mid-Career", pay: 1900 },
-        { id: "easy", label: "Senior", pay: 3800 },
+        { id: "hard", label: "Entry Level", pay: 1440 },
+        { id: "med", label: "Mid-Career", pay: 2160 },
+        { id: "easy", label: "Senior", pay: 2880 },
     ],
     housing: [
         { id: "shared", label: "Shared Room", cost: 1000, qolPerRound: -2 },
@@ -26,6 +26,14 @@ const VAR_RULES = {
     },
 };
 
+const CREDIT_LIMITS = { min: 300, max: 850 };
+const CREDIT_THRESHOLDS = { excellent: 740, fair: 600 };
+const HOUSING_CREDIT_MIN = 600;
+const CREDIT_REFINANCE_MIN = 681;
+const CREDIT_PREMIUM_CARD_MIN = 721;
+const CREDIT_PAYDAY_THRESHOLD = 550;
+const SECURITY_DEPOSIT_FACTOR = 0.25;
+
 const WINTER_ROUNDS = new Set([1, 2, 3, 4, 22, 23, 24, 25, 26]);
 const SUMMER_ROUNDS = new Set([10, 11, 12, 13, 14, 15, 16]);
 const ROUNDS_PER_YEAR = 26;
@@ -35,7 +43,11 @@ const HOLIDAYS = {
         cardTitle: "Date Night / Treat Yourself",
         note: "Spend what you can to feel human this winter.",
         options: [
-            { minSpend: 100, qol: 5, log: "You splurged on date night. QoL +5." },
+            {
+                minSpend: 100,
+                qol: 5,
+                log: "You splurged on date night. QoL +5.",
+            },
             {
                 minSpend: 0,
                 qol: -3,
@@ -50,7 +62,11 @@ const HOLIDAYS = {
         note: "Cash in hand makes this easier. Underfund and feel the FOMO.",
         options: [
             { minSpend: 50, qol: 3, log: "Beer, brats, sunshine. QoL +3." },
-            { minSpend: 0, qol: -1, log: "You stayed in and missed out. QoL -1." },
+            {
+                minSpend: 0,
+                qol: -1,
+                log: "You stayed in and missed out. QoL -1.",
+            },
         ],
         maxCost: 80,
     },
@@ -65,7 +81,11 @@ const HOLIDAYS = {
                 log: "Weekend trip to the Dells/Door County. QoL +8.",
             },
             { minSpend: 50, qol: 2, log: "Local fireworks and fun. QoL +2." },
-            { minSpend: 0, qol: -2, log: "You skipped the celebrations. QoL -2." },
+            {
+                minSpend: 0,
+                qol: -2,
+                log: "You skipped the celebrations. QoL -2.",
+            },
         ],
         maxCost: 250,
     },
@@ -132,6 +152,16 @@ let state = {
     round: 1,
     cash: 0,
     debt: 0,
+    creditScore: 700,
+    creditScoreLastChange: 0,
+    creditCleanRounds: 0,
+    creditScoreDeltaThisRound: 0,
+    creditScoreReasonsThisRound: [],
+    creditInquiriesThisRound: [],
+    creditUsedThisRound: 0,
+    paymentsMadeThisRound: false,
+    roundDebtStart: 0,
+    creditRoundNotes: [],
     qol: 50,
     savings: {
         emergency: 0,
@@ -161,6 +191,7 @@ let state = {
         brokenPhone: false,
         taxRefundClaimed: false,
         offeredVictory: false,
+        premiumCardActive: false,
     },
     eventLog: [],
     job: null,
@@ -241,6 +272,67 @@ function liquidityTotal() {
 
 function netWorthTotal() {
     return liquidityTotal() + nestEggTotal() - state.debt;
+}
+
+function clampCreditScore(val) {
+    return Math.max(CREDIT_LIMITS.min, Math.min(CREDIT_LIMITS.max, val));
+}
+
+function creditScoreTier(score) {
+    if (score >= CREDIT_THRESHOLDS.excellent) {
+        return { key: "excellent", label: "Excellent" };
+    }
+    if (score >= CREDIT_THRESHOLDS.fair) {
+        return { key: "fair", label: "Fair / Average" };
+    }
+    return { key: "poor", label: "Poor" };
+}
+
+function startingCreditForDifficulty(id) {
+    if (id === "hard") return 650;
+    if (id === "easy") return 720;
+    return 700;
+}
+
+function applyCreditScoreChange(delta, reason) {
+    if (!delta) return 0;
+    const before = state.creditScore;
+    state.creditScore = clampCreditScore(state.creditScore + delta);
+    const applied = state.creditScore - before;
+    if (applied !== 0 && reason) {
+        state.creditScoreReasonsThisRound.push({ delta: applied, reason });
+    }
+    state.creditScoreDeltaThisRound += applied;
+    return applied;
+}
+
+function markCreditInquiry(reason = "Credit pull") {
+    state.creditInquiriesThisRound.push(reason);
+}
+
+function showCreditDelta(delta) {
+    const el = document.getElementById("credit-delta");
+    if (!el) return;
+    if (!delta) {
+        el.classList.remove("show", "positive", "negative");
+        el.innerText = "";
+        return;
+    }
+    el.innerText = `${delta > 0 ? "+" : ""}${delta}`;
+    el.classList.remove("positive", "negative");
+    el.classList.add(delta > 0 ? "positive" : "negative", "show");
+    setTimeout(() => el.classList.remove("show"), 1800);
+}
+
+function calcSecurityDeposit(home) {
+    const base = Math.round(home.cost * SECURITY_DEPOSIT_FACTOR);
+    if (state.creditScore > 750) return 0;
+    if (state.creditScore < HOUSING_CREDIT_MIN) return base * 2;
+    return base;
+}
+
+function displayedWeek(roundNum) {
+    return Math.max(1, (roundNum - 1) * 2 + 1);
 }
 
 function retirementFutureStatus(balance) {
@@ -362,19 +454,69 @@ function init() {
 
 function setDiff(id) {
     state.job = CONFIG.difficulties.find((d) => d.id === id);
+    state.creditScore = clampCreditScore(startingCreditForDifficulty(id));
+    state.creditScoreLastChange = 0;
+    state.creditCleanRounds = 0;
     document.getElementById("setup-step-1").classList.add("hidden");
     document.getElementById("setup-step-2").classList.remove("hidden");
 
     const hContainer = document.getElementById("housing-options");
+    hContainer.innerHTML = "";
     CONFIG.housing.forEach((h) => {
-        hContainer.innerHTML += `<div class="select-card" onclick="setHousing('${h.id}')"><h3>${h.label}</h3><p>$${h.cost} per month</p></div>`;
+        const restricted = h.id === "apt" || h.id === "lux";
+        const blocked = restricted && state.creditScore < HOUSING_CREDIT_MIN;
+        const deposit = calcSecurityDeposit(h);
+        const depositNote =
+            deposit === 0
+                ? "Deposit waived (strong credit)."
+                : `Est. deposit: $${deposit}`;
+        const restrictionNote = blocked
+            ? `<p style="font-size:0.85rem; color:#b91c1c;">Application denied: Credit Score ${HOUSING_CREDIT_MIN}+ required.</p>`
+            : "";
+        hContainer.innerHTML += `<div class="select-card ${
+            blocked ? "disabled" : ""
+        }" ${
+            blocked
+                ? `title="Credit Score ${HOUSING_CREDIT_MIN}+ required to apply."`
+                : `onclick="setHousing('${h.id}')"`
+        }><h3>${h.label}</h3><p>$${
+            h.cost
+        } per month</p><p style="font-size:0.85rem; color:#666;">${depositNote}</p>${restrictionNote}</div>`;
     });
 }
 
 function setHousing(id) {
-    state.home = CONFIG.housing.find((h) => h.id === id);
+    const home = CONFIG.housing.find((h) => h.id === id);
+    if (!home) return;
+    const restricted = home.id === "apt" || home.id === "lux";
+    if (restricted && state.creditScore < HOUSING_CREDIT_MIN) {
+        alert(
+            `Application denied: Credit Score ${HOUSING_CREDIT_MIN}+ required for this housing option.`,
+        );
+        return;
+    }
+
+    state.home = home;
     document.getElementById("setup-modal").classList.add("hidden");
     state.cash = 500;
+    const deposit = calcSecurityDeposit(home);
+    if (deposit > 0) {
+        if (state.cash >= deposit) {
+            state.cash -= deposit;
+            showToast(
+                `Security deposit of $${deposit} placed for ${home.label}.`,
+            );
+        } else {
+            const debtPart = deposit - state.cash;
+            state.cash = 0;
+            recordDebt(debtPart, `Security deposit for ${home.label} (credit)`);
+            showToast(
+                `Security deposit of $${deposit} placed. $${debtPart} went to debt.`,
+            );
+        }
+    } else {
+        showToast("Deposit waived thanks to a strong credit score!");
+    }
     startRound();
 }
 
@@ -480,9 +622,7 @@ function applySavingsInterest() {
     const retirementBal = state.savings.retirement || 0;
     const emergGain = Math.floor(emerg * SAVINGS_RATES.emergency);
     const hysaGain = Math.floor(hysa * SAVINGS_RATES.hysa);
-    const vacationGain = Math.floor(
-        vacation * SAVINGS_RATES.vacation,
-    );
+    const vacationGain = Math.floor(vacation * SAVINGS_RATES.vacation);
     let retirementGain = 0;
     let marketMood = null;
 
@@ -539,6 +679,14 @@ function applySavingsInterest() {
 
 // --- ROUND LOGIC ---
 function startRound() {
+    state.roundDebtStart = state.debt;
+    state.creditScoreDeltaThisRound = 0;
+    state.creditScoreReasonsThisRound = [];
+    state.creditInquiriesThisRound = [];
+    state.creditUsedThisRound = 0;
+    state.paymentsMadeThisRound = false;
+    state.creditScoreLastChange = 0;
+    state.creditRoundNotes = [];
     state.retirementMatchThisRound = 0;
     processScheduledWithdrawals();
     applySavingsInterest();
@@ -675,15 +823,26 @@ function generateCards() {
         }
 
         if (state.round % 6 === 1) {
-            addCard("opp", "Ask for a Raise", 1, true, {
-                note: "Drop a $1 bill to try for +5-10% salary.",
-                onPaid: () => {
-                    const delta = Math.random() < 0.5 ? 0.05 : 0.1;
-                    state.job.pay = Math.round(state.job.pay * (1 + delta));
-                    adjustQoL(-1);
-                    showToast("Negotiation paid off with a raise!");
-                },
-            });
+            if (state.creditScore >= HOUSING_CREDIT_MIN) {
+                addCard("opp", "Ask for a Raise", 1, true, {
+                    note: "Drop a $1 bill to try for +5-10% salary.",
+                    onPaid: () => {
+                        const delta =
+                            Math.random() < 0.5 ? 0.05 : 0.1;
+                        state.job.pay = Math.round(
+                            state.job.pay * (1 + delta),
+                        );
+                        adjustQoL(-1);
+                        showToast(
+                            "Negotiation paid off with a raise!",
+                        );
+                    },
+                });
+            } else {
+                state.creditRoundNotes.push(
+                    "A promotion background check flagged your low credit, so the raise conversation stalled.",
+                );
+            }
         }
 
         addCard("opp", "Overtime Block", 1, true, {
@@ -723,6 +882,68 @@ function generateCards() {
                     state.cash += 150;
                     adjustQoL(-2);
                     showToast("Side hustle shift paid $150.");
+                },
+            });
+        }
+
+        if (
+            state.creditScore >= CREDIT_REFINANCE_MIN &&
+            state.debt > 0 &&
+            !hasActiveCard("Refinance Loans")
+        ) {
+            addCard("opp", "Refinance Loans", 50, true, {
+                note: "Credit 680+ unlocks better rates. Drop $50 to refinance and trim 10% off your debt.",
+                onPaid: () => {
+                    const savings = Math.max(
+                        0,
+                        Math.round(state.debt * 0.1),
+                    );
+                    if (savings > 0) {
+                        state.debt = Math.max(0, state.debt - savings);
+                        syncDebtCardAmount();
+                        showToast(
+                            `Refinance approved: debt reduced by $${savings}.`,
+                        );
+                    } else {
+                        showToast(
+                            "Refinance approved, but no debt to reduce.",
+                        );
+                    }
+                    markCreditInquiry("Refinance loan");
+                },
+            });
+        }
+
+        if (
+            state.creditScore >= CREDIT_PREMIUM_CARD_MIN &&
+            !state.flags.premiumCardActive &&
+            !hasActiveCard("Premium Credit Card Offer")
+        ) {
+            addCard("opp", "Premium Credit Card Offer", 1, true, {
+                note: "Apply for a cash back card (>720 credit). Hard inquiry; unlocks 2% back on credit spend.",
+                onPaid: () => {
+                    state.flags.premiumCardActive = true;
+                    markCreditInquiry("Premium card application");
+                    showToast(
+                        "Approved for premium rewards card! Cash back active.",
+                    );
+                },
+            });
+        }
+
+        if (
+            state.creditScore < CREDIT_PAYDAY_THRESHOLD &&
+            !hasActiveCard("Payday Loan Offer")
+        ) {
+            addCard("opp", "Payday Loan Offer", 1, true, {
+                note: "Predatory loan: drop $1 to take $200 now; $260 debt hits immediately.",
+                onPaid: () => {
+                    state.cash += 200;
+                    recordDebt(260, "Payday loan repayment + fees");
+                    markCreditInquiry("Payday loan application");
+                    showToast(
+                        "Payday loan deposited: +$200 now, $260 debt added.",
+                    );
                 },
             });
         }
@@ -769,37 +990,25 @@ function maybeAddHolidayCard(round) {
     const holiday = holidayForRound(round);
     if (!holiday) return;
     const maxCost = maxHolidayCost(holiday) || holiday.amount || 0;
-    addCard(
-        "event",
-        holiday.cardTitle,
-        maxCost,
-        true,
-        {
-            note: `${holiday.name}: ${holiday.note}`,
-            roundsLeft: 1,
-            meta: {
-                choiceOptions: holiday.options,
-                max: maxCost,
-                holidayId: round,
-            },
+    addCard("event", holiday.cardTitle, maxCost, true, {
+        note: `${holiday.name}: ${holiday.note}`,
+        roundsLeft: 1,
+        meta: {
+            choiceOptions: holiday.options,
+            max: maxCost,
+            holidayId: round,
         },
-    );
+    });
 }
 
 function spawnOvertimeOffer() {
-    addCard(
-        "event",
-        "Overtime Offer",
-        1,
-        true,
-        {
-            note: "Right-click to accept overtime. Pay arrives next round; QoL drops a bit.",
-            roundsLeft: 1,
-            meta: {
-                overtimeOffer: { pay: 180, qol: -2 },
-            },
+    addCard("event", "Overtime Offer", 1, true, {
+        note: "Right-click to accept overtime. Pay arrives next round; QoL drops a bit.",
+        roundsLeft: 1,
+        meta: {
+            overtimeOffer: { pay: 180, qol: -2 },
         },
-    );
+    });
 }
 
 function applyBrokenPhonePenalty() {
@@ -874,8 +1083,16 @@ function maybeSeasonalEvents(roundNow) {
                 note: "Friends want pitchers at the Terrace.",
                 meta: {
                     choiceOptions: [
-                        { minSpend: 30, qol: 2, log: "You hit the Terrace. QoL +2." },
-                        { minSpend: 0, qol: -1, log: "You passed and felt FOMO. QoL -1." },
+                        {
+                            minSpend: 30,
+                            qol: 2,
+                            log: "You hit the Terrace. QoL +2.",
+                        },
+                        {
+                            minSpend: 0,
+                            qol: -1,
+                            log: "You passed and felt FOMO. QoL -1.",
+                        },
                     ],
                     max: 30,
                 },
@@ -886,8 +1103,16 @@ function maybeSeasonalEvents(roundNow) {
                 note: "Gift + attire. Skipping stings socially.",
                 meta: {
                     choiceOptions: [
-                        { minSpend: 150, qol: 2, log: "You showed up for the wedding. QoL +2." },
-                        { minSpend: 0, qol: -5, log: "You skipped the wedding. QoL -5." },
+                        {
+                            minSpend: 150,
+                            qol: 2,
+                            log: "You showed up for the wedding. QoL +2.",
+                        },
+                        {
+                            minSpend: 0,
+                            qol: -5,
+                            log: "You skipped the wedding. QoL -5.",
+                        },
                     ],
                     max: 150,
                 },
@@ -1173,6 +1398,12 @@ function drop(ev, cardId) {
         savingsType,
     };
     card.payments.push(payment);
+    if (type === "credit") {
+        state.creditUsedThisRound += amount;
+    }
+    if (card.type !== "goal") {
+        state.paymentsMadeThisRound = true;
+    }
 
     let newPaidTotal = card.payments.reduce((sum, p) => sum + p.amount, 0);
 
@@ -1196,6 +1427,10 @@ function drop(ev, cardId) {
         if (type === "credit") {
             showToast("Can't pay debt with more debt.");
             card.payments.pop();
+            state.creditUsedThisRound = Math.max(
+                0,
+                state.creditUsedThisRound - amount,
+            );
             removeDebtRecordByPaymentId(paymentId);
             renderAll();
             return;
@@ -1258,6 +1493,12 @@ function payFull(cardId) {
         type: paymentType,
         savingsType,
     });
+    if (paymentType === "credit") {
+        state.creditUsedThisRound += remaining;
+    }
+    if (card.type !== "goal") {
+        state.paymentsMadeThisRound = true;
+    }
 
     if (card.type === "goal") {
         adjustSavings(savingsType, remaining);
@@ -1298,6 +1539,10 @@ function removePayment(cardId, paymentId) {
     // Refund
     if (payment.type === "credit") {
         removeDebtRecordByPaymentId(payment.id);
+        state.creditUsedThisRound = Math.max(
+            0,
+            state.creditUsedThisRound - payment.amount,
+        );
     } else {
         state.cash += payment.amount;
     }
@@ -1317,6 +1562,10 @@ function removePayment(cardId, paymentId) {
     // Remove from stack
     card.payments.splice(payIdx, 1);
 
+    state.paymentsMadeThisRound = state.cards.some(
+        (c) => c.type !== "goal" && (c.payments?.length || 0) > 0,
+    );
+
     renderAll();
 }
 
@@ -1333,9 +1582,7 @@ function renderAll() {
     state.cards.forEach((card) => {
         let paid = card.payments.reduce((sum, p) => sum + p.amount, 0);
         const isOvertimeOffer = !!card.meta?.overtimeOffer;
-        const maxTarget = isOvertimeOffer
-            ? 1
-            : card.meta?.max ?? card.amount;
+        const maxTarget = isOvertimeOffer ? 1 : card.meta?.max ?? card.amount;
         const baseTarget = card.meta?.base ?? card.amount;
         const isVariable = card.type === "var";
         const isSavings = !!card.meta?.savingsType;
@@ -1346,9 +1593,10 @@ function renderAll() {
         const savingsBal = isSavings
             ? savingsBalance(card.meta.savingsType)
             : 0;
-        let progress = isSavings || isOvertimeOfferCard
-            ? 0
-            : Math.min(100, (paid / maxTarget) * 100);
+        let progress =
+            isSavings || isOvertimeOfferCard
+                ? 0
+                : Math.min(100, (paid / maxTarget) * 100);
         let isDone = isVariable
             ? paid >= baseTarget
             : isSavings
@@ -1356,11 +1604,12 @@ function renderAll() {
             : isChoiceCard
             ? false
             : paid >= card.amount;
-        const hideDrop = isSavings || isOvertimeOfferCard
-            ? false
-            : isVariable
-            ? paid >= maxTarget
-            : isChoiceCard
+        const hideDrop =
+            isSavings || isOvertimeOfferCard
+                ? false
+                : isVariable
+                ? paid >= maxTarget
+                : isChoiceCard
                 ? false
                 : isDone;
         const debtRisk =
@@ -1401,26 +1650,26 @@ function renderAll() {
         const displayAmount = isSavings
             ? `Balance: $${savingsBal}`
             : isOvertimeOfferCard
-                ? `Overtime: +$${card.meta.overtimeOffer?.pay || 0} next round`
-                : isVariable
-                    ? `Up to $${maxTarget}`
-                    : `$${card.amount}`;
+            ? `Overtime: +$${card.meta.overtimeOffer?.pay || 0} next round`
+            : isVariable
+            ? `Up to $${maxTarget}`
+            : `$${card.amount}`;
         const footerText = isSavings
             ? card.meta.savingsType === "hysa" ||
               card.meta.savingsType === "vacation"
                 ? "3.5% APY; withdrawals land next round."
                 : card.meta.savingsType === "retirement"
-                    ? "Volatile market returns; locked until retirement. Cash gets employer match."
-                    : "0.01% APY; withdraw anytime."
+                ? "Volatile market returns; locked until retirement. Cash gets employer match."
+                : "0.01% APY; withdraw anytime."
             : isOvertimeOfferCard
-                ? "Right-click to take overtime. Pay lands next round; QoL hit now."
-                : isVariable
-                    ? isDone
-                        ? `QoL covered (spent $${paid})`
-                        : `$${Math.max(0, baseTarget - paid)} until QoL holds`
-                    : isDone
-                        ? "Paid!"
-                        : `$${Math.max(0, card.amount - paid)} left`;
+            ? "Right-click to take overtime. Pay lands next round; QoL hit now."
+            : isVariable
+            ? isDone
+                ? `QoL covered (spent $${paid})`
+                : `$${Math.max(0, baseTarget - paid)} until QoL holds`
+            : isDone
+            ? "Paid!"
+            : `$${Math.max(0, card.amount - paid)} left`;
 
         // Generate Mini-Bills HTML
         let stackHtml = card.payments
@@ -1474,19 +1723,19 @@ function renderAll() {
                             Base $${baseTarget} keeps QoL steady; up to $${maxTarget} gives smaller boosts.
                            </div>`
                         : isSavings
-                            ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                        ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
                             ${
                                 isRetirement
                                     ? "Cash contributions only. Employer match applies; funds are locked."
                                     : "Drop cash to deposit. Right-click for withdrawals."
                             }
                            </div>`
-                            : isChoiceCard
-                                ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                        : isChoiceCard
+                        ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
                                 Pay what you can; QoL changes based on your spend.
                            </div>`
-                            : isOvertimeOfferCard
-                                ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                        : isOvertimeOfferCard
+                        ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
                                 Right-click this card to take the overtime shift.
                            </div>`
                         : ""
@@ -1521,18 +1770,48 @@ function updateHeader() {
     const vacation = state.savings.vacation || 0;
     const liquidity = liquidityTotal();
     const nestEgg = nestEggTotal();
+    const creditScore = Math.round(state.creditScore);
+    const creditTier = creditScoreTier(creditScore);
+    const creditBadge = document.getElementById("credit-badge");
+    if (creditBadge) {
+        creditBadge.classList.remove("excellent", "fair", "poor");
+        creditBadge.classList.add(creditTier.key);
+        creditBadge.title =
+            "Your creditworthiness. Affects ability to rent apartments and get loans. Drop debt to improve.";
+    }
+    const creditDelta = document.getElementById("credit-delta");
+    if (creditDelta) {
+        if (state.creditScoreLastChange) {
+            creditDelta.innerText = `${
+                state.creditScoreLastChange > 0 ? "+" : ""
+            }${state.creditScoreLastChange}`;
+            creditDelta.classList.toggle(
+                "positive",
+                state.creditScoreLastChange > 0,
+            );
+            creditDelta.classList.toggle(
+                "negative",
+                state.creditScoreLastChange < 0,
+            );
+        } else if (!creditDelta.classList.contains("show")) {
+            creditDelta.innerText = "";
+            creditDelta.classList.remove("positive", "negative");
+        }
+    }
+    const creditTierEl = document.getElementById("ui-credit-tier");
+    if (creditTierEl) creditTierEl.innerText = creditTier.label;
+    const creditScoreEl = document.getElementById("ui-credit-score");
+    if (creditScoreEl) creditScoreEl.innerText = creditScore;
 
-    document.getElementById("ui-round").innerText = state.round;
-    document.getElementById("ui-liquidity").innerText =
-        fmt(liquidity);
+    document.getElementById("ui-round").innerText = displayedWeek(
+        state.round,
+    );
+    document.getElementById("ui-liquidity").innerText = fmt(liquidity);
     document.getElementById("ui-cash").innerText = fmt(cash);
-    document.getElementById("ui-emergency").innerText =
-        fmt(emerg);
+    document.getElementById("ui-emergency").innerText = fmt(emerg);
     document.getElementById("ui-hysa").innerText = fmt(hysa);
-    document.getElementById("ui-vacation").innerText =
-        fmt(vacation);
-    document.getElementById("ui-nest-egg").innerText =
-        fmt(nestEgg);
+    document.getElementById("ui-vacation").innerText = fmt(vacation);
+    document.getElementById("ui-nest-egg").innerText = fmt(nestEgg);
     document.getElementById("ui-debt").innerText = fmt(state.debt);
     document.getElementById(
         "ui-debt-count",
@@ -1560,7 +1839,7 @@ function renderLog() {
         return;
     }
 
-    roundLabel.innerText = state.lastLogRound;
+    roundLabel.innerText = displayedWeek(state.lastLogRound);
     list.innerHTML = state.lastLog
         .map(
             (msg) => `
@@ -1624,7 +1903,9 @@ function openCardMenu(ev, cardId) {
     menu.innerHTML = options
         .map(
             (opt, idx) =>
-                `<div class="ctx-item ${opt.disabled ? "disabled" : ""}" ${opt.disabled ? "" : `onclick="selectCardMenuOption(${idx})"`}>${opt.label}</div>`,
+                `<div class="ctx-item ${opt.disabled ? "disabled" : ""}" ${
+                    opt.disabled ? "" : `onclick="selectCardMenuOption(${idx})"`
+                }>${opt.label}</div>`,
         )
         .join("");
     menu.style.left = `${ev.pageX}px`;
@@ -1658,9 +1939,7 @@ function acceptOvertime(cardId) {
         roundDue: state.round + 1,
     });
     if (qol !== 0) adjustQoL(qol);
-    showToast(
-        `Overtime accepted: +$${pay} arrives next round. QoL ${qol}.`,
-    );
+    showToast(`Overtime accepted: +$${pay} arrives next round. QoL ${qol}.`);
     state.cards = state.cards.filter((c) => c.id !== cardId);
     renderAll();
 }
@@ -1684,14 +1963,14 @@ function openWithdrawModal(type, cardId) {
         type === "hysa"
             ? "Schedule HYSA Withdrawal"
             : type === "vacation"
-                ? "Schedule Vacation Withdrawal"
-                : "Withdraw from Emergency Fund";
+            ? "Schedule Vacation Withdrawal"
+            : "Withdraw from Emergency Fund";
     document.getElementById("withdraw-desc").innerText =
         type === "hysa"
             ? `Available: $${balance}. Scheduled funds land at the start of next round.`
             : type === "vacation"
-                ? `Available: $${balance}. Vacation HYSA funds land next round.`
-                : `Available: $${balance}. Withdrawals arrive immediately.`;
+            ? `Available: $${balance}. Vacation HYSA funds land next round.`
+            : `Available: $${balance}. Withdrawals arrive immediately.`;
     const input = document.getElementById("withdraw-amount");
     input.value = Math.min(
         balance,
@@ -1763,10 +2042,8 @@ function closeRecap() {
         return;
     }
 
-    const shouldStartRound =
-        state.pendingRoundStart && !state.gameOver;
-    const shouldShowEndgame =
-        state.pendingEndgame && state.gameOver;
+    const shouldStartRound = state.pendingRoundStart && !state.gameOver;
+    const shouldShowEndgame = state.pendingEndgame && state.gameOver;
 
     state.pendingRoundStart = false;
 
@@ -1781,10 +2058,10 @@ function closeRecap() {
 function showVictoryChoice() {
     const continueGame = confirm(
         "Congratulations! You've survived 52 weeks (1 full year)!\n\n" +
-        "You can:\n" +
-        "• Click OK to EXIT and see your victory recap\n" +
-        "• Click Cancel to CONTINUE playing\n\n" +
-        "What would you like to do?"
+            "You can:\n" +
+            "• Click OK to EXIT and see your victory recap\n" +
+            "• Click Cancel to CONTINUE playing\n\n" +
+            "What would you like to do?",
     );
 
     if (continueGame) {
@@ -1812,16 +2089,13 @@ function showEndgameSummary(isVictory = false) {
     const vacation = state.savings.vacation || 0;
     const fmt = (val) => `$${Math.round(val).toLocaleString()}`;
 
-    document.getElementById("endgame-networth").innerText =
-        fmt(netWorth);
-    document.getElementById("endgame-liquidity").innerText =
-        fmt(liquidity);
-    document.getElementById("endgame-nest").innerText =
-        fmt(nestEgg);
-    document.getElementById("endgame-debt").innerText =
-        fmt(state.debt);
-    document.getElementById("endgame-breakdown").innerText =
-        `Cash $${cash.toLocaleString()} · Emerg $${emerg.toLocaleString()} · HYSA $${hysa.toLocaleString()} · Vacation $${vacation.toLocaleString()}`;
+    document.getElementById("endgame-networth").innerText = fmt(netWorth);
+    document.getElementById("endgame-liquidity").innerText = fmt(liquidity);
+    document.getElementById("endgame-nest").innerText = fmt(nestEgg);
+    document.getElementById("endgame-debt").innerText = fmt(state.debt);
+    document.getElementById(
+        "endgame-breakdown",
+    ).innerText = `Cash $${cash.toLocaleString()} · Emerg $${emerg.toLocaleString()} · HYSA $${hysa.toLocaleString()} · Vacation $${vacation.toLocaleString()}`;
     document.getElementById("endgame-future").innerText =
         retirementFutureStatus(nestEgg);
     const reasonEl = document.getElementById("endgame-reason");
@@ -1982,16 +2256,133 @@ function resolveChoiceCards() {
     state.cards
         .filter((c) => c.meta?.choiceOptions)
         .forEach((card) => {
-            const paid = card.payments.reduce(
-                (s, p) => s + p.amount,
-                0,
-            );
-            const option = chooseOptionForSpend(
-                paid,
-                card.meta.choiceOptions,
-            );
+            const paid = card.payments.reduce((s, p) => s + p.amount, 0);
+            const option = chooseOptionForSpend(paid, card.meta.choiceOptions);
             applyChoiceOutcome(card, option, logs);
         });
+    return logs;
+}
+
+function handleCreditCashBack() {
+    const logs = [];
+    if (!state.flags.premiumCardActive) return logs;
+    if (state.creditUsedThisRound <= 0) return logs;
+    const cashBack = Math.max(
+        0,
+        Math.round(state.creditUsedThisRound * 0.02),
+    );
+    if (cashBack > 0) {
+        state.cash += cashBack;
+        logs.push(
+            `Because you used your rewards card, you earned $${cashBack} in cash back.`,
+        );
+        showToast(`Cash back earned: +$${cashBack}`);
+    }
+    return logs;
+}
+
+function evaluateCreditScore(debtCards) {
+    const logs = [];
+    const startDebt = state.roundDebtStart ?? state.debt;
+    const endDebt = state.debt;
+    const debtChange = endDebt - startDebt;
+    let cleanRound = true;
+
+    if (debtChange > 0) {
+        const drop =
+            debtChange >= 800 ? -20 : debtChange >= 300 ? -15 : -10;
+        const applied = applyCreditScoreChange(
+            drop,
+            "Debt grew this round",
+        );
+        if (applied !== 0) {
+            logs.push(
+                `Because you ended the round with higher debt than you started, your utilization spiked and your Credit Score dropped by ${Math.abs(applied)} points.`,
+            );
+        }
+        cleanRound = false;
+    }
+
+    const missedFixed = debtCards.filter((c) => c.type === "fixed");
+    if (missedFixed.length > 0) {
+        missedFixed.forEach((c) => {
+            const applied = applyCreditScoreChange(
+                -30,
+                `${c.title} was missed and reported`,
+            );
+            if (applied !== 0) {
+                logs.push(
+                    `Because you missed ${c.title.toLowerCase()}, a delinquency was recorded, crashing your score by ${Math.abs(applied)} points.`,
+                );
+            }
+        });
+        cleanRound = false;
+    }
+
+    if (state.creditInquiriesThisRound.length > 0) {
+        state.creditInquiriesThisRound.forEach((r) => {
+            const applied = applyCreditScoreChange(-5, r);
+            if (applied !== 0) {
+                logs.push(
+                    `A hard inquiry (${r}) nudged your score down by ${Math.abs(applied)} points.`,
+                );
+            }
+        });
+        cleanRound = false;
+    }
+
+    const paidBill = state.paymentsMadeThisRound;
+    if ((endDebt === 0 || debtChange < 0) && paidBill) {
+        const applied = applyCreditScoreChange(
+            5,
+            "You reduced revolving balances and paid bills",
+        );
+        if (applied !== 0) {
+            const msg =
+                endDebt === 0
+                    ? "Because you paid off your credit card balance in full, your Credit Score rose by"
+                    : "Because you lowered your debt and paid bills, your Credit Score rose by";
+            logs.push(`${msg} ${Math.abs(applied)} points.`);
+        }
+    }
+
+    if (cleanRound && debtChange <= 0) {
+        state.creditCleanRounds += 1;
+    } else {
+        state.creditCleanRounds = 0;
+    }
+
+    if (state.creditCleanRounds >= 4) {
+        const applied = applyCreditScoreChange(
+            10,
+            "Four straight rounds without new debt",
+        );
+        if (applied !== 0) {
+            logs.push(
+                `Because you maintained four clean rounds without new debt, your Credit Score earned a consistency boost of ${Math.abs(applied)} points.`,
+            );
+        }
+        state.creditCleanRounds = 0;
+    }
+
+    state.creditScoreLastChange = state.creditScoreDeltaThisRound;
+    if (state.creditScoreDeltaThisRound !== 0) {
+        showCreditDelta(state.creditScoreDeltaThisRound);
+        const reasonSummary = state.creditScoreReasonsThisRound
+            .map((r) => r.reason)
+            .join("; ");
+        const reasonSuffix = reasonSummary
+            ? ` (${reasonSummary})`
+            : "";
+        showToast(
+            `Credit Score ${
+                state.creditScoreDeltaThisRound > 0 ? "+" : ""
+            }${state.creditScoreDeltaThisRound}${reasonSuffix}`,
+        );
+    } else {
+        showCreditDelta(0);
+    }
+
     return logs;
 }
 
@@ -2080,10 +2471,20 @@ function nextRound() {
         showToast(`Leftover cash moved to Emergency Fund: $${sweptCash}`);
     }
 
+    const cashBackLogs = handleCreditCashBack();
+    const creditLogs = evaluateCreditScore(debtCards);
+
     const finishingRound = state.round;
     const roundLog = buildRoundLog(
         debtCards.filter((c) => c.type === "fixed"),
-        variableOutcome.effects.concat(choiceLogs, transferLogs, sweepLogs),
+        variableOutcome.effects.concat(
+            choiceLogs,
+            transferLogs,
+            sweepLogs,
+            cashBackLogs,
+            creditLogs,
+            state.creditRoundNotes || [],
+        ),
     );
     const upcomingRound = state.round + 1;
     const holidayWarning = holidayForRound(upcomingRound);
