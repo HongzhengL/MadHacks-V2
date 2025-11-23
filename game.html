@@ -450,13 +450,22 @@
                     <span id="ui-cash" style="margin-left: 5px">$0</span>
                 </div>
                 <div class="stat-badge bg-light">
-                    Credit:
+                    Savings:
+                    <span id="ui-savings" style="margin-left: 5px">$0</span>
+                </div>
+                <div class="stat-badge bg-light" id="debt-badge">
+                    Debt:
                     <span id="ui-debt" style="margin-left: 5px">$0</span>
+                    <span
+                        id="ui-debt-count"
+                        style="margin-left: 5px; font-size: 0.8rem; color: #666"
+                        >(0)</span
+                    >
                 </div>
                 <div
                     class="stat-badge"
                     style="background: #e3f2fd; color: #1565c0">
-                    QoL: <span id="ui-qol" style="margin-left: 5px">50</span>
+                    Quality of Life: <span id="ui-qol" style="margin-left: 5px">50</span>
                 </div>
                 <button class="btn-ghost" onclick="openRecap()">
                     View Recap
@@ -597,12 +606,35 @@
                 cash: 0,
                 debt: 0,
                 qol: 50,
+                savings: 0,
+                debtRecords: [],
                 job: null,
                 home: null,
                 cards: [],
                 lastLog: [],
                 lastLogRound: null,
             };
+
+            // --- DEBT HELPERS ---
+            function recordDebt(amount, reason, meta = {}) {
+                state.debt += amount;
+                state.debtRecords.push({
+                    id: Date.now() + Math.random(),
+                    amount,
+                    reason,
+                    ...meta,
+                });
+            }
+
+            function removeDebtRecordByPaymentId(paymentId) {
+                let idx = state.debtRecords.findIndex(
+                    (d) => d.paymentId === paymentId,
+                );
+                if (idx !== -1) {
+                    state.debt -= state.debtRecords[idx].amount;
+                    state.debtRecords.splice(idx, 1);
+                }
+            }
 
             // --- INIT ---
             function init() {
@@ -642,10 +674,10 @@
 
             function generateCards() {
                 state.cards = [];
-                addCard("fixed", "Rent", state.home.cost);
-                if (state.round % 2 === 0) addCard("fixed", "Utilities", 120);
+                if (state.round % 4 === 1) addCard("fixed", "Rent", state.home.cost);
+                if (state.round % 4 === 1) addCard("fixed", "Utilities", 120);
                 addCard("var", "Groceries", 200);
-                addCard("var", "Fun / Ent", 100);
+                addCard("var", "Fun / Entertainment", 100);
                 addCard("goal", "Emergency Fund", 100, true); // true = optional
 
                 if (Math.random() > 0.7)
@@ -705,7 +737,6 @@
                         return;
                     }
                     amount = remaining; // Credit pays full remainder
-                    state.debt += amount;
                 } else {
                     amount = parseInt(valStr);
                     if (state.cash < amount) {
@@ -716,11 +747,24 @@
                 }
 
                 // ADD PAYMENT TO STACK (The Undo Hook)
+                const paymentId = Date.now();
                 card.payments.push({
-                    id: Date.now(),
+                    id: paymentId,
                     amount: amount,
                     type: type,
                 });
+
+                if (type === "credit") {
+                    recordDebt(
+                        amount,
+                        `Credit used on ${card.title}`,
+                        { paymentId },
+                    );
+                }
+
+                if (card.type === "goal") {
+                    state.savings += amount;
+                }
 
                 renderAll();
             }
@@ -736,9 +780,13 @@
 
                 // Refund
                 if (payment.type === "credit") {
-                    state.debt -= payment.amount;
+                    removeDebtRecordByPaymentId(payment.id);
                 } else {
                     state.cash += payment.amount;
+                }
+
+                if (card.type === "goal") {
+                    state.savings -= payment.amount;
                 }
 
                 // Remove from stack
@@ -822,6 +870,18 @@
                 document.getElementById("ui-round").innerText = state.round;
                 document.getElementById("ui-cash").innerText = `$${state.cash}`;
                 document.getElementById("ui-debt").innerText = `$${state.debt}`;
+                document.getElementById("ui-debt-count").innerText = `(${
+                    state.debtRecords.length
+                })`;
+                document.getElementById("debt-badge").title =
+                    state.debtRecords.length === 0
+                        ? "No debt currently"
+                        : state.debtRecords
+                              .map((d) => `${d.reason}: $${d.amount}`)
+                              .join("\n");
+                document.getElementById(
+                    "ui-savings",
+                ).innerText = `$${state.savings}`;
                 document.getElementById("ui-qol").innerText = state.qol;
             }
 
@@ -946,7 +1006,12 @@
                         return;
                     unpaidFixed.forEach((c) => {
                         let paid = c.payments.reduce((s, p) => s + p.amount, 0);
-                        state.debt += c.amount - paid + 50;
+                        let debtAdd = c.amount - paid + 50;
+                        recordDebt(
+                            debtAdd,
+                            `Unpaid ${c.title} (includes $50 penalty)`,
+                            { cardId: c.id },
+                        );
                         state.qol -= 5;
                     });
                 }
@@ -956,7 +1021,7 @@
 
                 state.round += 2;
                 if (state.round > 26) {
-                    alert("Game Over! QoL: " + state.qol);
+                    alert("Game Over! Quality of Life: " + state.qol);
                     location.reload();
                 } else startRound();
             }
