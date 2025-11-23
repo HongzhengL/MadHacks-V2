@@ -45,6 +45,12 @@ body {
     text-align: center;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
 }
+.audio-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 18px;
+}
 .selection-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

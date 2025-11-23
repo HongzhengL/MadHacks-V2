@@ -201,6 +201,7 @@ let state = {
         taxRefundClaimed: false,
         offeredVictory: false,
         premiumCardActive: false,
+        audioPromptDone: false,
     },
     eventLog: [],
     job: null,
@@ -219,6 +220,99 @@ let state = {
 };
 let contextMenuOptions = [];
 let withdrawContext = null;
+let introSequencePlaying = false;
+
+// --- INTRO AUDIO FLOW ---
+function showAudioPrompt() {
+    const audioModal = document.getElementById("audio-modal");
+    const setupModal = document.getElementById("setup-modal");
+    if (!audioModal || !setupModal) return;
+
+    if (state.flags.audioPromptDone) {
+        showSetupModal();
+        return;
+    }
+
+    audioModal.classList.remove("hidden");
+    setupModal.classList.add("hidden");
+}
+
+function hideAudioPrompt() {
+    const audioModal = document.getElementById("audio-modal");
+    if (audioModal) audioModal.classList.add("hidden");
+}
+
+function showSetupModal() {
+    const setupModal = document.getElementById("setup-modal");
+    if (!setupModal) return;
+    setupModal.classList.remove("hidden");
+    const step1 = document.getElementById("setup-step-1");
+    const step2 = document.getElementById("setup-step-2");
+    if (step1) step1.classList.remove("hidden");
+    if (step2) step2.classList.add("hidden");
+}
+
+function finishAudioPrompt() {
+    state.flags.audioPromptDone = true;
+    introSequencePlaying = false;
+    hideAudioPrompt();
+    showSetupModal();
+}
+
+function startIntroAudioSequence() {
+    const audioEl = document.getElementById("intro-audio");
+    if (!audioEl) {
+        finishAudioPrompt();
+        return;
+    }
+
+    audioEl.pause();
+    audioEl.currentTime = 0;
+    audioEl.onended = null;
+
+    const playSecond = () => {
+        audioEl.pause();
+        audioEl.currentTime = 0;
+        audioEl.src = "audio/TrumpAudio1.mp3";
+        audioEl.onended = () => {
+            audioEl.onended = null;
+            finishAudioPrompt();
+        };
+        const p2 = audioEl.play();
+        if (p2 && p2.catch) {
+            p2.catch((err) => {
+                console.warn("Second intro audio failed", err);
+                finishAudioPrompt();
+            });
+        }
+    };
+
+    audioEl.src = "audio/TrumpAudio2.mp3";
+    audioEl.onended = playSecond;
+    const p1 = audioEl.play();
+    if (p1 && p1.catch) {
+        p1.catch((err) => {
+            console.warn("First intro audio failed", err);
+            finishAudioPrompt();
+        });
+    }
+}
+
+function handleAudioPlay() {
+    if (introSequencePlaying) return;
+    introSequencePlaying = true;
+    startIntroAudioSequence();
+}
+
+function handleAudioSkip() {
+    const audioEl = document.getElementById("intro-audio");
+    if (audioEl) {
+        audioEl.pause();
+        audioEl.currentTime = 0;
+        audioEl.onended = null;
+    }
+    finishAudioPrompt();
+}
 
 function isWinter(round) {
     const r = ((round - 1) % 26) + 1;
@@ -459,6 +553,9 @@ function init() {
             d.pay
         } per paycheck)</p></div>`;
     });
+
+    // First experience: audio prompt before setup.
+    showAudioPrompt();
 }
 
 function setDiff(id) {

@@ -7,7 +7,7 @@
         <link rel="stylesheet" href="game.css" />
     </head>
     <body>
-        <div id="setup-modal" class="modal-overlay">
+        <div id="setup-modal" class="modal-overlay hidden">
             <div class="modal-box" id="setup-step-1">
                 <h2>Welcome to Madison! 🦡</h2>
                 <p>Select your income level:</p>
@@ -19,6 +19,40 @@
                 <div class="selection-grid" id="housing-options"></div>
             </div>
         </div>
+
+        <div id="audio-modal" class="modal-overlay hidden">
+            <div class="modal-box">
+                <h2>Play intro audio?</h2>
+                <p style="text-align: left; white-space: pre-wrap">
+"You've got a paycheck-maybe a good one, maybe not so good-but let's be honest: it's yours, and you're going to make it work better than anybody. You've got bills, you've got dreams, and you've got one year-just twelve months-to show whether you can not only stay afloat, but WIN.
+
+You pick your income. You pick your housing-could be tiny, could be tremendous. Then you've got rent, groceries, debt, all the usual things, plus surprise events that come out of nowhere-believe me, they always do.
+
+The question is: can you finish the year with money in the bank, wealth on the rise, and a Quality of Life that isn't a disaster?
+
+Most people can't do it. But maybe you can. We'll see."
+                </p>
+                <p
+                    style="
+                        font-size: 0.9rem;
+                        color: #666;
+                        text-align: left;
+                        margin-top: 10px;
+                    ">
+                    Disclaimer: Donald Trump did not actually say this.
+                </p>
+                <div class="audio-actions">
+                    <button class="btn-primary" onclick="handleAudioPlay()">
+                        Play and Start
+                    </button>
+                    <button class="btn-ghost" onclick="handleAudioSkip()">
+                        Skip
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <audio id="intro-audio" class="hidden" preload="auto"></audio>
 
         <header>
             <div style="display: flex; gap: 10px; align-items: center">
