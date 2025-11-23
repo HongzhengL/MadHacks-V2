@@ -370,6 +370,40 @@
                 pointer-events: none;
             }
 
+            /* Context Menu */
+            .context-menu {
+                position: absolute;
+                background: white;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+                padding: 6px 0;
+                display: none;
+                z-index: 1500;
+                min-width: 200px;
+            }
+            .context-menu.show {
+                display: block;
+            }
+            .context-menu .ctx-item {
+                padding: 10px 14px;
+                cursor: pointer;
+                font-size: 0.9rem;
+                color: #333;
+            }
+            .context-menu .ctx-item:hover {
+                background: #f8f9fa;
+            }
+
+            .modal-box input[type="number"] {
+                width: 100%;
+                padding: 10px;
+                margin-top: 10px;
+                border-radius: 6px;
+                border: 1px solid #ccc;
+                font-size: 1rem;
+            }
+
             /* --- RECAP --- */
             .recap-panel {
                 width: min(480px, 92vw);
@@ -550,7 +584,28 @@
             </div>
         </div>
 
-        
+        <div
+            id="withdraw-modal"
+            class="modal-overlay hidden"
+            onclick="if(event.target === this) closeWithdrawModal()">
+            <div class="modal-box">
+                <h3 id="withdraw-title" style="margin-top: 0">Withdraw</h3>
+                <p id="withdraw-desc"></p>
+                <input
+                    id="withdraw-amount"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value="0" />
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px">
+                    <button class="btn-ghost" onclick="closeWithdrawModal()">Cancel</button>
+                    <button class="btn-primary" onclick="confirmWithdraw()">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="card-menu" class="context-menu"></div>
+
         <div class="wallet-row">
             <span style="font-weight: bold; font-size: 0.9rem; color: #555"
                 >Drag to Pay:</span
@@ -667,13 +722,25 @@
 
             const WINTER_ROUNDS = new Set([1, 2, 3, 4, 22, 23, 24, 25, 26]);
             const SUMMER_ROUNDS = new Set([10, 11, 12, 13, 14, 15, 16]);
+            const ROUNDS_PER_YEAR = 26;
+            const SAVINGS_RATES = {
+                emergency: 0.0001 / ROUNDS_PER_YEAR, // 0.01% APY
+                hysa: 0.035 / ROUNDS_PER_YEAR, // 3.5% APY
+            };
 
             let state = {
                 round: 1,
                 cash: 0,
                 debt: 0,
                 qol: 50,
-                savings: 0,
+                savings: {
+                    emergency: 0,
+                    hysa: 0,
+                    vacation: 0,
+                    retirement: 0,
+                    other: 0,
+                },
+                scheduledWithdrawals: [],
                 debtRecords: [],
                 coverage: { health: false },
                 flags: {
@@ -700,7 +767,11 @@
                     entertainment: { missedRounds: 0 },
                 },
                 homeLogThisRound: null,
+                gameOver: false,
+                pendingRoundStart: false,
             };
+            let contextMenuOptions = [];
+            let withdrawContext = null;
 
             function isWinter(round) {
                 const r = ((round - 1) % 26) + 1;
@@ -714,6 +785,35 @@
 
             function adjustQoL(delta) {
                 state.qol = Math.max(0, Math.min(100, state.qol + delta));
+                if (state.qol <= 0) {
+                    handleGameOver("Game Over: Your Quality of Life hit zero.");
+                }
+            }
+
+            function handleGameOver(message) {
+                if (state.gameOver) return;
+                state.gameOver = true;
+                alert(message);
+                location.reload();
+            }
+
+            function savingsTotal() {
+                return (
+                    (state.savings.emergency || 0) +
+                    (state.savings.hysa || 0) +
+                    (state.savings.vacation || 0) +
+                    (state.savings.retirement || 0) +
+                    (state.savings.other || 0)
+                );
+            }
+
+            function adjustSavings(type, delta) {
+                if (!state.savings[type]) state.savings[type] = 0;
+                state.savings[type] = Math.max(0, state.savings[type] + delta);
+            }
+
+            function savingsBalance(type) {
+                return state.savings[type] || 0;
             }
 
             function monthlyFixedEstimate() {
@@ -801,8 +901,69 @@
                 startRound();
             }
 
+            function processScheduledWithdrawals() {
+                const arriving = [];
+                state.scheduledWithdrawals = state.scheduledWithdrawals.filter(
+                    (w) => {
+                        if (state.round >= w.roundDue) {
+                            arriving.push(w);
+                            return false;
+                        }
+                        return true;
+                    },
+                );
+                arriving.forEach((w) => {
+                    state.cash += w.amount;
+                    showToast(
+                        `$${w.amount} from ${w.source} landed in your balance.`,
+                    );
+                });
+            }
+
+            function transferGoalBalancesToSavings() {
+                const transfers = [];
+                ["vacation", "retirement"].forEach((type) => {
+                    const bal = savingsBalance(type);
+                    if (bal > 0) {
+                        adjustSavings(type, -bal);
+                        adjustSavings("emergency", bal);
+                        state.cards
+                            .filter((c) => c.meta?.savingsType === type)
+                            .forEach((c) => (c.payments = []));
+                        transfers.push({ type, amount: bal });
+                    }
+                });
+                return transfers;
+            }
+
+            function applySavingsInterest() {
+                const earned = [];
+                const emerg = state.savings.emergency || 0;
+                const hysa = state.savings.hysa || 0;
+                const emergGain = Math.floor(
+                    emerg * SAVINGS_RATES.emergency,
+                );
+                const hysaGain = Math.floor(hysa * SAVINGS_RATES.hysa);
+
+                if (emergGain > 0) {
+                    adjustSavings("emergency", emergGain);
+                    earned.push(`$${emergGain} in Emergency Fund interest`);
+                }
+                if (hysaGain > 0) {
+                    adjustSavings("hysa", hysaGain);
+                    earned.push(`$${hysaGain} in HYSA interest`);
+                }
+
+                if (earned.length) {
+                    showToast(earned.join("; "));
+                }
+            }
+
             // --- ROUND LOGIC ---
             function startRound() {
+                processScheduledWithdrawals();
+                applySavingsInterest();
+
                 if (state.flags.layoffRoundsLeft > 0) {
                     state.flags.layoffRoundsLeft -= 1;
                     showToast("Layoff: No paycheck this round.");
@@ -881,11 +1042,46 @@
                 });
 
                 // Goals
-                addCard("goal", "Emergency Fund / Savings", 100, true);
-                addCard("goal", "Vacation Fund", 50, true);
-                addCard("goal", "Retirement Contribution", 150, true, {
-                    note: "Long-term benefit; optional contribution.",
-                });
+                addCard(
+                    "goal",
+                    "Emergency Fund / Savings",
+                    100,
+                    true,
+                    {
+                        note: "0.01% APY; withdraw anytime.",
+                        meta: { savingsType: "emergency" },
+                    },
+                );
+                addCard(
+                    "goal",
+                    "High-Yield Savings Account (HYSA)",
+                    150,
+                    true,
+                    {
+                        note: "3.5% APY; withdrawals arrive next round.",
+                        meta: { savingsType: "hysa" },
+                    },
+                );
+                addCard(
+                    "goal",
+                    "Vacation Fund",
+                    50,
+                    true,
+                    {
+                        note: "Rolls into savings at end of round.",
+                        meta: { savingsType: "vacation" },
+                    },
+                );
+                addCard(
+                    "goal",
+                    "Retirement Contribution",
+                    150,
+                    true,
+                    {
+                        note: "Rolls into savings at end of round.",
+                        meta: { savingsType: "retirement" },
+                    },
+                );
 
                 // Opportunities (unlocked after a few rounds)
                 if (state.round >= OPP_UNLOCK_ROUND) {
@@ -1188,7 +1384,7 @@
                         state.flags.layoffRoundsLeft,
                         dur,
                     );
-                    const buffer = state.savings >= monthlyFixedEstimate() * 3;
+                    const buffer = savingsTotal() >= monthlyFixedEstimate() * 3;
                     adjustQoL(buffer ? -2 : -6);
                     if (!buffer) {
                         recordDebt(200, "Borrowed to cover bills during layoff");
@@ -1207,7 +1403,7 @@
                         const toDebt = Math.min(state.debt, Math.round(bonus * 0.5));
                         const toSave = Math.round(bonus * 0.3);
                         state.debt = Math.max(0, state.debt - toDebt);
-                        state.savings += toSave;
+                        adjustSavings("emergency", toSave);
                         state.cash += bonus - toDebt - toSave;
                         syncDebtCardAmount();
                     } else {
@@ -1277,18 +1473,19 @@
                 ev.currentTarget.classList.remove("hover");
 
                 let card = state.cards.find((c) => c.id == cardId);
+                const isSavings = !!card.meta?.savingsType;
                 let valStr = ev.dataTransfer.getData("val");
                 let type = ev.dataTransfer.getData("type");
 
                 // Calculate current total paid and cap for variable spending
-                const cap = card.meta?.max ?? card.amount;
+                const cap = isSavings ? Infinity : card.meta?.max ?? card.amount;
                 let currentPaid = card.payments.reduce(
                     (sum, p) => sum + p.amount,
                     0,
                 );
-                let remaining = Math.max(0, cap - currentPaid);
+                let remaining = isSavings ? Infinity : Math.max(0, cap - currentPaid);
 
-                if (remaining <= 0) {
+                if (!isSavings && remaining <= 0) {
                     showToast("You've already maxed this out for the round.");
                     return;
                 }
@@ -1318,10 +1515,12 @@
 
                 // ADD PAYMENT TO STACK (The Undo Hook)
                 const paymentId = Date.now();
+                const savingsType = card.meta?.savingsType || "other";
                 card.payments.push({
                     id: paymentId,
                     amount: amount,
                     type: type,
+                    savingsType,
                 });
 
                 let newPaidTotal = card.payments.reduce(
@@ -1338,7 +1537,7 @@
                 }
 
                 if (card.type === "goal") {
-                    state.savings += amount;
+                    adjustSavings(savingsType, amount);
                 }
 
                 if (card.meta?.debtCard) {
@@ -1373,6 +1572,10 @@
             function payFull(cardId) {
                 const card = state.cards.find((c) => c.id == cardId);
                 if (!card) return;
+                if (card.meta?.savingsType) {
+                    showToast("Drop a bill to deposit into savings.");
+                    return;
+                }
 
                 const cap = card.meta?.max ?? card.amount;
                 const paidSoFar = card.payments.reduce(
@@ -1403,14 +1606,16 @@
                     );
                 }
 
+                const savingsType = card.meta?.savingsType || "other";
                 card.payments.push({
                     id: paymentId,
                     amount: remaining,
                     type: paymentType,
+                    savingsType,
                 });
 
                 if (card.type === "goal") {
-                    state.savings += remaining;
+                    adjustSavings(savingsType, remaining);
                 }
 
                 if (card.meta?.debtCard) {
@@ -1460,7 +1665,7 @@
                 }
 
                 if (card.type === "goal") {
-                    state.savings -= payment.amount;
+                    adjustSavings(payment.savingsType || "other", -payment.amount);
                 }
 
                 // Remove from stack
@@ -1487,13 +1692,22 @@
                     const maxTarget = card.meta?.max ?? card.amount;
                     const baseTarget = card.meta?.base ?? card.amount;
                     const isVariable = card.type === "var";
-                    let progress = Math.min(100, (paid / maxTarget) * 100);
-                    let isDone = isVariable ? paid >= baseTarget : paid >= card.amount;
-                    const hideDrop = isVariable ? paid >= maxTarget : isDone;
+                    const isSavings = !!card.meta?.savingsType;
+                    const savingsBal = isSavings ? savingsBalance(card.meta.savingsType) : 0;
+                    let progress = isSavings ? 0 : Math.min(100, (paid / maxTarget) * 100);
+                    let isDone = isVariable
+                        ? paid >= baseTarget
+                        : isSavings
+                          ? false
+                          : paid >= card.amount;
+                    const hideDrop = isSavings ? false : isVariable ? paid >= maxTarget : isDone;
                     const debtRisk =
                         card.type === "fixed" ||
                         card.debtOnMiss !== null ||
                         card.meta?.debtCard;
+                    const contextAttr = card.meta?.savingsType
+                        ? `oncontextmenu="openCardMenu(event, ${card.id})"`
+                        : "";
                     const cautionHtml = debtRisk
                         ? `<span class="caution-icon" title="${
                               card.meta?.debtCard
@@ -1518,21 +1732,27 @@
                         }
                     }
 
-                    const notesHtml = [card.note, dueText]
+                    const notesHtml = [card.note, isSavings ? "" : dueText]
                         .filter(Boolean)
                         .map((txt) => `<div class="card-note">${txt}</div>`)
                         .join("");
 
-                    const displayAmount = isVariable
-                        ? `Up to $${maxTarget}`
-                        : `$${card.amount}`;
-                    const footerText = isVariable
-                        ? isDone
-                            ? `QoL covered (spent $${paid})`
-                            : `$${Math.max(0, baseTarget - paid)} until QoL holds`
-                        : isDone
-                          ? "Paid!"
-                          : `$${Math.max(0, card.amount - paid)} left`;
+                    const displayAmount = isSavings
+                        ? `Balance: $${savingsBal}`
+                        : isVariable
+                            ? `Up to $${maxTarget}`
+                            : `$${card.amount}`;
+                    const footerText = isSavings
+                        ? card.meta.savingsType === "hysa"
+                            ? "3.5% APY; withdrawals land next round."
+                            : "0.01% APY; withdraw anytime."
+                        : isVariable
+                            ? isDone
+                                ? `QoL covered (spent $${paid})`
+                                : `$${Math.max(0, baseTarget - paid)} until QoL holds`
+                            : isDone
+                                ? "Paid!"
+                                : `$${Math.max(0, card.amount - paid)} left`;
 
                     // Generate Mini-Bills HTML
                     let stackHtml = card.payments
@@ -1553,7 +1773,7 @@
                         .join("");
 
                     let html = `
-            <div class="game-card ${card.type} ${isDone ? "paid-full" : ""}">
+            <div class="game-card ${card.type} ${isDone ? "paid-full" : ""}" ${contextAttr}>
                 <div class="card-top">
                     <span class="card-title">${cautionHtml}${card.title}</span>
                     <span style="font-weight:bold">${displayAmount}</span>
@@ -1566,9 +1786,13 @@
                 <div class="drop-zone" ondrop="drop(event, ${card.id})" ondragover="allowDrop(event)" ondragleave="leaveDrop(event)">
                     Drop Here
                 </div>
-                <button class="payfull-btn" onclick="payFull(${card.id})">
+                ${
+                    isSavings
+                        ? ""
+                        : `<button class="payfull-btn" onclick="payFull(${card.id})">
                     Pay Full
                 </button>`
+                }`
                         : ""
                 }
 
@@ -1577,6 +1801,10 @@
                         ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
                             Base $${baseTarget} keeps QoL steady; up to $${maxTarget} gives smaller boosts.
                            </div>`
+                        : isSavings
+                            ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                            Drop cash to deposit. Right-click for withdrawals.
+                           </div>`
                         : ""
                 }
 
@@ -1584,9 +1812,13 @@
                     ${stackHtml}
                 </div>
 
-                <div class="card-progress">
+                ${
+                    isSavings
+                        ? ""
+                        : `<div class="card-progress">
                     <div class="card-progress-bar" style="width: ${progress}%"></div>
-                </div>
+                </div>`
+                }
                 <div style="text-align:right; font-size:0.8rem; margin-top:4px; color:#666;">
                     ${footerText}
                 </div>
@@ -1614,7 +1846,7 @@
                               .join("\n");
                 document.getElementById(
                     "ui-savings",
-                ).innerText = `$${state.savings}`;
+                ).innerText = `$${savingsTotal()} (HYSA $${state.savings.hysa})`;
                 document.getElementById("ui-qol-text").innerText = state.qol;
                 document.getElementById(
                     "ui-qol-bar",
@@ -1643,6 +1875,112 @@
                     .join("");
             }
 
+            function openCardMenu(ev, cardId) {
+                const card = state.cards.find((c) => c.id == cardId);
+                if (!card || !card.meta?.savingsType) return;
+
+                ev.preventDefault();
+                ev.stopPropagation();
+                closeCardMenu();
+
+                const options = [];
+                if (card.meta.savingsType === "emergency") {
+                    options.push({ label: "Withdraw money", action: () => openWithdrawModal("emergency", cardId) });
+                }
+                if (card.meta.savingsType === "hysa") {
+                    options.push({ label: "Schedule withdrawal", action: () => openWithdrawModal("hysa", cardId) });
+                }
+
+                if (options.length === 0) return;
+                contextMenuOptions = options;
+
+                const menu = document.getElementById("card-menu");
+                menu.innerHTML = options
+                    .map(
+                        (opt, idx) =>
+                            `<div class="ctx-item" onclick="selectCardMenuOption(${idx})">${opt.label}</div>`,
+                    )
+                    .join("");
+                menu.style.left = `${ev.pageX}px`;
+                menu.style.top = `${ev.pageY}px`;
+                menu.classList.add("show");
+            }
+
+            function closeCardMenu() {
+                const menu = document.getElementById("card-menu");
+                menu.classList.remove("show");
+                contextMenuOptions = [];
+            }
+
+            function selectCardMenuOption(idx) {
+                const opt = contextMenuOptions[idx];
+                closeCardMenu();
+                if (opt && typeof opt.action === "function") opt.action();
+            }
+
+            document.addEventListener("click", () => closeCardMenu());
+
+            function openWithdrawModal(type, cardId) {
+                closeCardMenu();
+                const balance = savingsBalance(type);
+                if (balance <= 0) {
+                    showToast("No savings available to withdraw.");
+                    return;
+                }
+                withdrawContext = { type, cardId, max: balance };
+                const modal = document.getElementById("withdraw-modal");
+                document.getElementById("withdraw-title").innerText =
+                    type === "hysa"
+                        ? "Schedule HYSA Withdrawal"
+                        : "Withdraw from Emergency Fund";
+                document.getElementById("withdraw-desc").innerText =
+                    type === "hysa"
+                        ? `Available: $${balance}. Scheduled funds land at the start of next round.`
+                        : `Available: $${balance}. Withdrawals arrive immediately.`;
+                const input = document.getElementById("withdraw-amount");
+                input.value = Math.min(balance, Math.max(0, Number(input.value) || balance));
+                input.max = balance;
+                modal.classList.remove("hidden");
+            }
+
+            function closeWithdrawModal() {
+                const modal = document.getElementById("withdraw-modal");
+                modal.classList.add("hidden");
+                withdrawContext = null;
+            }
+
+            function confirmWithdraw() {
+                if (!withdrawContext) return;
+                const input = document.getElementById("withdraw-amount");
+                let amt = Math.floor(Number(input.value));
+                const max = withdrawContext.max;
+                if (!amt || amt <= 0) {
+                    showToast("Enter an amount to withdraw.");
+                    return;
+                }
+                if (amt > max) {
+                    showToast("Cannot withdraw more than you have.");
+                    return;
+                }
+
+                if (withdrawContext.type === "emergency") {
+                    adjustSavings("emergency", -amt);
+                    state.cash += amt;
+                    showToast(`Withdrew $${amt} to your balance.`);
+                } else if (withdrawContext.type === "hysa") {
+                    adjustSavings("hysa", -amt);
+                    state.scheduledWithdrawals.push({
+                        amount: amt,
+                        source: "HYSA",
+                        roundDue: state.round + 2,
+                    });
+                    showToast(`Scheduled $${amt} from HYSA for next round.`);
+                }
+
+                closeWithdrawModal();
+                renderAll();
+            }
+
             function openRecap() {
                 const modal = document.getElementById("recap-modal");
                 renderLog();
@@ -1652,6 +1990,11 @@
             function closeRecap() {
                 const modal = document.getElementById("recap-modal");
                 modal.classList.remove("show");
+
+                if (state.pendingRoundStart && !state.gameOver) {
+                    state.pendingRoundStart = false;
+                    startRound();
+                }
             }
 
             function buildRoundLog(unpaidFixed, extraLogs = []) {
@@ -1659,6 +2002,7 @@
                 let totalCredit = 0;
 
                 state.cards.forEach((card) => {
+                    if (card.meta?.savingsType) return;
                     const paid = card.payments.reduce(
                         (sum, p) => sum + p.amount,
                         0,
@@ -1866,20 +2210,43 @@
                     }
                 }
 
+                const transferred = transferGoalBalancesToSavings();
+                const transferLogs = transferred.map((t) => {
+                    const label =
+                        t.type === "vacation"
+                            ? "vacation fund"
+                            : "retirement contribution";
+                    return `Because you set aside money for ${label}, $${t.amount} rolled into savings for next round's interest.`;
+                });
+
+                if (transferred.length > 0) {
+                    const msg = transferred
+                        .map((t) => `${t.type === "vacation" ? "Vacation" : "Retirement"}: $${t.amount}`)
+                        .join(" | ");
+                    showToast(`Auto-transfer to savings: ${msg}`);
+                }
+
                 const finishingRound = state.round;
                 const roundLog = buildRoundLog(
                     debtCards.filter((c) => c.type === "fixed"),
-                    variableOutcome.effects,
+                    variableOutcome.effects.concat(transferLogs),
                 );
                 state.lastLog = roundLog;
                 state.lastLogRound = finishingRound;
                 state.homeLogThisRound = null;
 
-                state.round += 2;
+                const upcomingRound = state.round + 2;
+
+                // Show recap modal automatically at the end of the round.
+                renderAll();
+                state.round = upcomingRound;
+                state.pendingRoundStart = state.round <= 26 && !state.gameOver;
+                openRecap();
+
                 if (state.round > 26) {
                     alert("Game Over! Quality of Life: " + state.qol);
                     location.reload();
-                } else startRound();
+                }
             }
 
             function showToast(msg) {
