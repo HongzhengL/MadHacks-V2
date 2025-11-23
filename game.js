@@ -29,6 +29,96 @@ const VAR_RULES = {
 const WINTER_ROUNDS = new Set([1, 2, 3, 4, 22, 23, 24, 25, 26]);
 const SUMMER_ROUNDS = new Set([10, 11, 12, 13, 14, 15, 16]);
 const ROUNDS_PER_YEAR = 26;
+const HOLIDAYS = {
+    4: {
+        name: "Valentine's Day / The Dating Tax",
+        cardTitle: "Date Night / Treat Yourself",
+        note: "Spend what you can to feel human this winter.",
+        options: [
+            { minSpend: 100, qol: 5, log: "You splurged on date night. QoL +5." },
+            {
+                minSpend: 0,
+                qol: -3,
+                log: "Spent the night alone eating cold leftovers. QoL -3.",
+            },
+        ],
+        maxCost: 150,
+    },
+    11: {
+        name: "Brat Fest / Memorial Day Kickoff",
+        cardTitle: "First BBQ of the Season",
+        note: "Cash in hand makes this easier. Underfund and feel the FOMO.",
+        options: [
+            { minSpend: 50, qol: 3, log: "Beer, brats, sunshine. QoL +3." },
+            { minSpend: 0, qol: -1, log: "You stayed in and missed out. QoL -1." },
+        ],
+        maxCost: 80,
+    },
+    14: {
+        name: "Independence Day Weekend",
+        cardTitle: "Independence Day Weekend",
+        note: "Travel vs. local fireworks vs. staying home.",
+        options: [
+            {
+                minSpend: 200,
+                qol: 8,
+                log: "Weekend trip to the Dells/Door County. QoL +8.",
+            },
+            { minSpend: 50, qol: 2, log: "Local fireworks and fun. QoL +2." },
+            { minSpend: 0, qol: -2, log: "You skipped the celebrations. QoL -2." },
+        ],
+        maxCost: 250,
+    },
+    18: {
+        name: "Hippie Christmas (Move-Out Day)",
+        cardTitle: "Apartment Restock",
+        note: "Lease turnover chaos. Restock or gamble on curb finds.",
+        options: [
+            { minSpend: 150, qol: 4, log: "You refreshed your place. QoL +4." },
+            {
+                minSpend: 0,
+                qol: 0,
+                log: "You scavenged curb furniture. Could be fine... or bedbugs.",
+                setBedbugRisk: true,
+                riskChance: 0.4,
+            },
+        ],
+        maxCost: 180,
+    },
+    24: {
+        name: "Thanksgiving",
+        cardTitle: "Turkey Day Travel",
+        note: "Travel is pricey; loneliness is pricier.",
+        options: [
+            {
+                minSpend: 300,
+                qol: 5,
+                log: "You made the trip home. QoL +5.",
+            },
+            {
+                minSpend: 0,
+                qol: -5,
+                log: "Stayed on campus/alone. QoL -5.",
+            },
+        ],
+        maxCost: 300,
+    },
+    26: {
+        name: "Gift Giving Season",
+        cardTitle: "Gift Giving Season",
+        note: "Final boss. Gifts show up in QoL.",
+        options: [
+            {
+                minSpend: 500,
+                qol: 15,
+                log: "Generous gifts spread cheer. QoL +15.",
+            },
+            { minSpend: 200, qol: 5, log: "Modest gifts. QoL +5." },
+            { minSpend: 0, qol: -10, log: "You went full Grinch. QoL -10." },
+        ],
+        maxCost: 500,
+    },
+};
 const SAVINGS_RATES = {
     emergency: 0.0001 / ROUNDS_PER_YEAR, // 0.01% APY
     hysa: 0.035 / ROUNDS_PER_YEAR, // 3.5% APY
@@ -67,6 +157,9 @@ let state = {
         burnoutRisk: 0,
         layoffRisk: 0,
         marketHabitActive: false,
+        bedbugRisk: false,
+        brokenPhone: false,
+        taxRefundClaimed: false,
     },
     eventLog: [],
     job: null,
@@ -160,6 +253,47 @@ function retirementFutureStatus(balance) {
         return "Status: Comfortable but keep investing.";
     }
     return "Status: You will be working until you are 82.";
+}
+
+function holidayForRound(roundNum) {
+    return HOLIDAYS[roundNum] || null;
+}
+
+function maxHolidayCost(holiday) {
+    if (!holiday) return 0;
+    if (holiday.maxCost) return holiday.maxCost;
+    return holiday.options.reduce(
+        (max, opt) => Math.max(max, opt.minSpend || 0),
+        0,
+    );
+}
+
+function chooseOptionForSpend(spent, options) {
+    if (!options || options.length === 0) return null;
+    const sorted = [...options].sort(
+        (a, b) => (b.minSpend || 0) - (a.minSpend || 0),
+    );
+    return (
+        sorted.find((opt) => spent >= (opt.minSpend || 0)) ||
+        sorted[sorted.length - 1]
+    );
+}
+
+function applyChoiceOutcome(card, option, logs) {
+    if (!option) return;
+    if (typeof option.qol === "number" && option.qol !== 0) {
+        adjustQoL(option.qol);
+    }
+    if (option.log) logs.push(option.log);
+    if (option.setBedbugRisk) {
+        const chance = option.riskChance ?? 0.4;
+        if (Math.random() < chance) {
+            state.flags.bedbugRisk = true;
+            logs.push(
+                "Your curb find might have bedbugs. Hope it works out...",
+            );
+        }
+    }
 }
 
 function monthlyFixedEstimate() {
@@ -593,6 +727,9 @@ function generateCards() {
         }
     }
 
+    // Holiday event cards on fixed calendar
+    maybeAddHolidayCard(state.round);
+
     if (state.flags.dentalBombPending) {
         addCard("event", "Dental Time Bomb", 800, false, {
             note: "Skipping checkups caught up to you.",
@@ -627,8 +764,203 @@ function addCard(type, title, amount, optional = false, options = {}) {
     });
 }
 
+function maybeAddHolidayCard(round) {
+    const holiday = holidayForRound(round);
+    if (!holiday) return;
+    const maxCost = maxHolidayCost(holiday) || holiday.amount || 0;
+    addCard(
+        "event",
+        holiday.cardTitle,
+        maxCost,
+        true,
+        {
+            note: `${holiday.name}: ${holiday.note}`,
+            roundsLeft: 1,
+            meta: {
+                choiceOptions: holiday.options,
+                max: maxCost,
+                holidayId: round,
+            },
+        },
+    );
+}
+
+function spawnOvertimeOffer() {
+    addCard(
+        "event",
+        "Overtime Offer",
+        1,
+        true,
+        {
+            note: "Right-click to accept overtime. Pay arrives next round; QoL drops a bit.",
+            roundsLeft: 1,
+            meta: {
+                overtimeOffer: { pay: 180, qol: -2 },
+            },
+        },
+    );
+}
+
+function applyBrokenPhonePenalty() {
+    const phoneCard = state.cards.find((c) => c.meta?.brokenPhone);
+    if (!phoneCard) {
+        state.flags.brokenPhone = false;
+        return;
+    }
+    const paid = phoneCard.payments.reduce((s, p) => s + p.amount, 0);
+    if (paid >= phoneCard.amount) {
+        state.flags.brokenPhone = false;
+        return;
+    }
+    state.flags.brokenPhone = true;
+    adjustQoL(-1);
+    showToast("Cracked phone is stressing you out (-1 QoL until repaired).");
+}
+
+function maybeSpawnBedbugFallout(roundNow) {
+    if (!state.flags.bedbugRisk) return;
+    if (roundNow < 19) return;
+    if (Math.random() < 0.35) {
+        addCard("event", "Bedbug Extermination", 300, false, {
+            note: "Curb couch bit back. Pay to nuke the infestation.",
+            debtOnMiss: 300,
+        });
+        state.flags.bedbugRisk = false;
+        showToast("Bedbug infestation! Extermination bill arrived.");
+    }
+}
+
+function maybeSeasonalEvents(roundNow) {
+    if (isWinter(roundNow)) {
+        if (Math.random() < 0.15) {
+            addCard("event", "Utility Adjustment", 120, false, {
+                note: "MGE true-up: winter heating ran high.",
+                debtOnMiss: 120,
+            });
+        }
+        if (Math.random() < 0.12) {
+            addCard("event", "Cabin Fever", 60, true, {
+                note: "Pay $60 to get out and dodge the winter blues.",
+                meta: {
+                    choiceOptions: [
+                        {
+                            minSpend: 60,
+                            qol: 2,
+                            log: "You got out for a winter activity. QoL +2.",
+                        },
+                        {
+                            minSpend: 0,
+                            qol: -3,
+                            log: "You stayed cooped up. QoL -3.",
+                        },
+                    ],
+                    max: 60,
+                },
+            });
+        }
+        const hasCar = true;
+        if (hasCar && Math.random() < 0.1) {
+            addCard("event", "Salt Damage", 40, false, {
+                note: "Car wash & rust treatment from salted roads.",
+                debtOnMiss: 40,
+            });
+        }
+    }
+
+    if (roundNow >= 10 && roundNow <= 18) {
+        if (Math.random() < 0.12) {
+            addCard("event", "Terrace Invitation", 30, true, {
+                note: "Friends want pitchers at the Terrace.",
+                meta: {
+                    choiceOptions: [
+                        { minSpend: 30, qol: 2, log: "You hit the Terrace. QoL +2." },
+                        { minSpend: 0, qol: -1, log: "You passed and felt FOMO. QoL -1." },
+                    ],
+                    max: 30,
+                },
+            });
+        }
+        if (Math.random() < 0.1) {
+            addCard("event", "Friend's Wedding", 150, true, {
+                note: "Gift + attire. Skipping stings socially.",
+                meta: {
+                    choiceOptions: [
+                        { minSpend: 150, qol: 2, log: "You showed up for the wedding. QoL +2." },
+                        { minSpend: 0, qol: -5, log: "You skipped the wedding. QoL -5." },
+                    ],
+                    max: 150,
+                },
+            });
+        }
+    }
+}
+
+function maybeWindfalls(roundNow) {
+    if (roundNow === 8 && !state.flags.taxRefundClaimed) {
+        state.cash += 300;
+        state.flags.taxRefundClaimed = true;
+        showToast("Tax refund arrived! +$300 cash.");
+    }
+
+    if (roundNow === 18 && Math.random() < 0.5) {
+        adjustQoL(3);
+        showToast("Found pristine curb furniture (Hippie Christmas)! QoL +3.");
+    }
+
+    if (Math.random() < 0.08) {
+        state.cash += 100;
+        showToast("Sublet miracle! You earned $100 cash.");
+    }
+    if (Math.random() < 0.06) {
+        state.cash += 25;
+        showToast("Class action settlement check arrived! +$25 cash.");
+    }
+}
+
+function maybeAdultingEvents() {
+    if (Math.random() < 0.1) {
+        addCard("event", "Alternate Side Parking Violation", 45, false, {
+            note: "Classic Madison ticket. Pay or it becomes debt.",
+            debtOnMiss: 45,
+        });
+    }
+
+    if (!state.flags.brokenPhone && Math.random() < 0.07) {
+        addCard("event", "Phone Screen Smashed", 150, false, {
+            note: "Pay to repair or QoL -1 each round until fixed.",
+            roundsLeft: 999,
+            meta: { brokenPhone: true },
+            onPaid: () => {
+                state.flags.brokenPhone = false;
+                showToast("Phone repaired. QoL steadies.");
+            },
+        });
+        state.flags.brokenPhone = true;
+    }
+
+    if (Math.random() < 0.06) {
+        if (state.cash >= 20) {
+            state.cash -= 20;
+        } else {
+            recordDebt(20, "Forgotten subscription renewal");
+        }
+        showToast("Forgotten subscription auto-renewed. -$20.");
+    }
+}
+
 function triggerEvents() {
-    if (state.round < EVENT_UNLOCK_ROUND) return;
+    const roundNow = state.round;
+
+    applyBrokenPhonePenalty();
+    maybeSpawnBedbugFallout(roundNow);
+    maybeSeasonalEvents(roundNow);
+    maybeWindfalls(roundNow);
+    maybeAdultingEvents();
+    if (!hasActiveCard("Overtime Offer") && Math.random() < 0.18) {
+        spawnOvertimeOffer();
+    }
+
+    if (roundNow < EVENT_UNLOCK_ROUND) return;
 
     // Recovery tick from recent injuries
     if (state.flags.slipRecoveryRounds > 0) {
@@ -999,31 +1331,44 @@ function renderAll() {
 
     state.cards.forEach((card) => {
         let paid = card.payments.reduce((sum, p) => sum + p.amount, 0);
-        const maxTarget = card.meta?.max ?? card.amount;
+        const isOvertimeOffer = !!card.meta?.overtimeOffer;
+        const maxTarget = isOvertimeOffer
+            ? 1
+            : card.meta?.max ?? card.amount;
         const baseTarget = card.meta?.base ?? card.amount;
         const isVariable = card.type === "var";
         const isSavings = !!card.meta?.savingsType;
+        const isChoiceCard = !!card.meta?.choiceOptions;
+        const isOvertimeOfferCard = !!card.meta?.overtimeOffer;
         const isRetirement =
             isSavings && card.meta.savingsType === "retirement";
         const savingsBal = isSavings
             ? savingsBalance(card.meta.savingsType)
             : 0;
-        let progress = isSavings ? 0 : Math.min(100, (paid / maxTarget) * 100);
+        let progress = isSavings || isOvertimeOfferCard
+            ? 0
+            : Math.min(100, (paid / maxTarget) * 100);
         let isDone = isVariable
             ? paid >= baseTarget
             : isSavings
             ? false
+            : isChoiceCard
+            ? false
             : paid >= card.amount;
-        const hideDrop = isSavings
+        const hideDrop = isSavings || isOvertimeOfferCard
             ? false
             : isVariable
             ? paid >= maxTarget
-            : isDone;
+            : isChoiceCard
+                ? false
+                : isDone;
         const debtRisk =
             card.type === "fixed" ||
             card.debtOnMiss !== null ||
             card.meta?.debtCard;
-        const contextAttr = card.meta?.savingsType
+        const hasContextMenu =
+            card.meta?.savingsType || card.meta?.overtimeOffer;
+        const contextAttr = hasContextMenu
             ? `oncontextmenu="openCardMenu(event, ${card.id})"`
             : "";
         const cautionHtml = debtRisk
@@ -1054,9 +1399,11 @@ function renderAll() {
 
         const displayAmount = isSavings
             ? `Balance: $${savingsBal}`
-            : isVariable
-            ? `Up to $${maxTarget}`
-            : `$${card.amount}`;
+            : isOvertimeOfferCard
+                ? `Overtime: +$${card.meta.overtimeOffer?.pay || 0} next round`
+                : isVariable
+                    ? `Up to $${maxTarget}`
+                    : `$${card.amount}`;
         const footerText = isSavings
             ? card.meta.savingsType === "hysa" ||
               card.meta.savingsType === "vacation"
@@ -1064,13 +1411,15 @@ function renderAll() {
                 : card.meta.savingsType === "retirement"
                     ? "Volatile market returns; locked until retirement. Cash gets employer match."
                     : "0.01% APY; withdraw anytime."
-            : isVariable
-            ? isDone
-                ? `QoL covered (spent $${paid})`
-                : `$${Math.max(0, baseTarget - paid)} until QoL holds`
-            : isDone
-            ? "Paid!"
-            : `$${Math.max(0, card.amount - paid)} left`;
+            : isOvertimeOfferCard
+                ? "Right-click to take overtime. Pay lands next round; QoL hit now."
+                : isVariable
+                    ? isDone
+                        ? `QoL covered (spent $${paid})`
+                        : `$${Math.max(0, baseTarget - paid)} until QoL holds`
+                    : isDone
+                        ? "Paid!"
+                        : `$${Math.max(0, card.amount - paid)} left`;
 
         // Generate Mini-Bills HTML
         let stackHtml = card.payments
@@ -1109,7 +1458,7 @@ function renderAll() {
                     Drop Here
                 </div>
                 ${
-                    isSavings
+                    isSavings || isOvertimeOfferCard
                         ? ""
                         : `<button class="payfull-btn" onclick="payFull(${card.id})">
                     Pay Full
@@ -1130,6 +1479,14 @@ function renderAll() {
                                     ? "Cash contributions only. Employer match applies; funds are locked."
                                     : "Drop cash to deposit. Right-click for withdrawals."
                             }
+                           </div>`
+                            : isChoiceCard
+                                ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                                Pay what you can; QoL changes based on your spend.
+                           </div>`
+                            : isOvertimeOfferCard
+                                ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
+                                Right-click this card to take the overtime shift.
                            </div>`
                         : ""
                 }
@@ -1216,35 +1573,46 @@ function renderLog() {
 
 function openCardMenu(ev, cardId) {
     const card = state.cards.find((c) => c.id == cardId);
-    if (!card || !card.meta?.savingsType) return;
+    if (!card) return;
+    const isSavings = !!card.meta?.savingsType;
+    const isOvertime = !!card.meta?.overtimeOffer;
+    if (!isSavings && !isOvertime) return;
 
     ev.preventDefault();
     ev.stopPropagation();
     closeCardMenu();
 
     const options = [];
-    if (card.meta.savingsType === "emergency") {
+    if (card.meta?.savingsType === "emergency") {
         options.push({
             label: "Withdraw money",
             action: () => openWithdrawModal("emergency", cardId),
         });
     }
-    if (card.meta.savingsType === "hysa") {
+    if (card.meta?.savingsType === "hysa") {
         options.push({
             label: "Schedule withdrawal",
             action: () => openWithdrawModal("hysa", cardId),
         });
     }
-    if (card.meta.savingsType === "vacation") {
+    if (card.meta?.savingsType === "vacation") {
         options.push({
             label: "Schedule withdrawal",
             action: () => openWithdrawModal("vacation", cardId),
         });
     }
-    if (card.meta.savingsType === "retirement") {
+    if (card.meta?.savingsType === "retirement") {
         options.push({
             label: "Locked until retirement (Age 59½)",
             disabled: true,
+        });
+    }
+    if (isOvertime) {
+        const pay = card.meta.overtimeOffer?.pay || 0;
+        const qol = card.meta.overtimeOffer?.qol || 0;
+        options.push({
+            label: `Take overtime (+$${pay} next round, QoL ${qol})`,
+            action: () => acceptOvertime(cardId),
         });
     }
 
@@ -1274,6 +1642,26 @@ function selectCardMenuOption(idx) {
     if (!opt || opt.disabled) return;
     closeCardMenu();
     if (typeof opt.action === "function") opt.action();
+}
+
+function acceptOvertime(cardId) {
+    const card = state.cards.find((c) => c.id == cardId);
+    if (!card || !card.meta?.overtimeOffer) return;
+    const offer = card.meta.overtimeOffer;
+    const pay = offer.pay || 0;
+    const qol = offer.qol || 0;
+
+    state.scheduledWithdrawals.push({
+        amount: pay,
+        source: "Overtime Pay",
+        roundDue: state.round + 1,
+    });
+    if (qol !== 0) adjustQoL(qol);
+    showToast(
+        `Overtime accepted: +$${pay} arrives next round. QoL ${qol}.`,
+    );
+    state.cards = state.cards.filter((c) => c.id !== cardId);
+    renderAll();
 }
 
 document.addEventListener("click", () => closeCardMenu());
@@ -1341,7 +1729,7 @@ function confirmWithdraw() {
         state.scheduledWithdrawals.push({
             amount: amt,
             source: "HYSA",
-            roundDue: state.round + 2,
+            roundDue: state.round + 1,
         });
         showToast(`Scheduled $${amt} from HYSA for next round.`);
     } else if (withdrawContext.type === "vacation") {
@@ -1349,7 +1737,7 @@ function confirmWithdraw() {
         state.scheduledWithdrawals.push({
             amount: amt,
             source: "Vacation Fund",
-            roundDue: state.round + 2,
+            roundDue: state.round + 1,
         });
         showToast(`Scheduled $${amt} from Vacation Fund for next round.`);
     }
@@ -1560,6 +1948,24 @@ function processVariableSpending() {
     return { effects, qolDelta };
 }
 
+function resolveChoiceCards() {
+    const logs = [];
+    state.cards
+        .filter((c) => c.meta?.choiceOptions)
+        .forEach((card) => {
+            const paid = card.payments.reduce(
+                (s, p) => s + p.amount,
+                0,
+            );
+            const option = chooseOptionForSpend(
+                paid,
+                card.meta.choiceOptions,
+            );
+            applyChoiceOutcome(card, option, logs);
+        });
+    return logs;
+}
+
 function nextRound() {
     if (state.gameOver) return;
     const debtCards = state.cards.filter((c) => {
@@ -1596,6 +2002,7 @@ function nextRound() {
     // Variable spending QoL effects
     const variableOutcome = processVariableSpending();
     adjustQoL(variableOutcome.qolDelta);
+    const choiceLogs = resolveChoiceCards();
 
     // Preventive care tracking
     const dentalCard = state.cards.find((c) => c.trackKey === "dentalCheck");
@@ -1647,13 +2054,20 @@ function nextRound() {
     const finishingRound = state.round;
     const roundLog = buildRoundLog(
         debtCards.filter((c) => c.type === "fixed"),
-        variableOutcome.effects.concat(transferLogs, sweepLogs),
+        variableOutcome.effects.concat(choiceLogs, transferLogs, sweepLogs),
     );
+    const upcomingRound = state.round + 1;
+    const holidayWarning = holidayForRound(upcomingRound);
+    if (holidayWarning) {
+        const maxCost = maxHolidayCost(holidayWarning);
+        roundLog.push(
+            `⚠️ Calendar Alert: ${holidayWarning.name} is happening next round! Costs will be around $${maxCost}. If you have money in your Vacation Fund or HYSA, initiate a withdrawal NOW so the cash is available when the event starts.`,
+        );
+    }
     state.lastLog = roundLog;
     state.lastLogRound = finishingRound;
     state.homeLogThisRound = null;
 
-    const upcomingRound = state.round + 2;
     const finishedYear = upcomingRound > 26;
 
     // Show recap modal automatically at the end of the round.
