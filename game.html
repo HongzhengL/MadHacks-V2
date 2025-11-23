@@ -922,18 +922,36 @@
 
             function transferGoalBalancesToSavings() {
                 const transfers = [];
+                let totalToEmergency = 0;
+
                 ["vacation", "retirement"].forEach((type) => {
                     const bal = savingsBalance(type);
                     if (bal > 0) {
-                        adjustSavings(type, -bal);
-                        adjustSavings("emergency", bal);
+                        totalToEmergency += bal;
+                        // Zero out the source bucket and clear its bill stack
+                        state.savings[type] = 0;
                         state.cards
                             .filter((c) => c.meta?.savingsType === type)
                             .forEach((c) => (c.payments = []));
                         transfers.push({ type, amount: bal });
                     }
                 });
+
+                if (totalToEmergency > 0) {
+                    adjustSavings("emergency", totalToEmergency);
+                }
+
                 return transfers;
+            }
+
+            // Sweep any leftover cash into emergency savings at round end.
+            function sweepCashToEmergency() {
+                const leftover = Math.max(0, Math.floor(state.cash));
+                if (leftover <= 0) return 0;
+
+                adjustSavings("emergency", leftover);
+                state.cash = 0;
+                return leftover;
             }
 
             function applySavingsInterest() {
@@ -2226,10 +2244,21 @@
                     showToast(`Auto-transfer to savings: ${msg}`);
                 }
 
+                const sweptCash = sweepCashToEmergency();
+                const sweepLogs =
+                    sweptCash > 0
+                        ? [
+                              `Because you swept $${sweptCash} of leftover balance into your emergency fund, it will start earning interest instead of sitting idle.`,
+                          ]
+                        : [];
+                if (sweptCash > 0) {
+                    showToast(`Leftover cash moved to Emergency Fund: $${sweptCash}`);
+                }
+
                 const finishingRound = state.round;
                 const roundLog = buildRoundLog(
                     debtCards.filter((c) => c.type === "fixed"),
-                    variableOutcome.effects.concat(transferLogs),
+                    variableOutcome.effects.concat(transferLogs, sweepLogs),
                 );
                 state.lastLog = roundLog;
                 state.lastLogRound = finishingRound;
