@@ -81,6 +81,39 @@ header {
     align-items: center;
     gap: 8px;
 }
+.badge-liquidity,
+.badge-nest {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    min-width: 210px;
+}
+.badge-liquidity {
+    background: linear-gradient(135deg, #e8f5e9, #d1f2e9);
+    border: 1px solid #b2dfdb;
+}
+.badge-nest {
+    background: linear-gradient(135deg, #fff4cc, #e0ecff);
+    border: 1px solid #f1c40f;
+}
+.badge-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #555;
+}
+.badge-value {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #0f5132;
+}
+.badge-nest .badge-value {
+    color: #1f3b8b;
+}
+.badge-subtext {
+    font-size: 0.8rem;
+    color: #4b5563;
+}
 .bg-light {
     background: #f8f9fa;
     border: 1px solid #ddd;
@@ -387,6 +420,13 @@ header {
 .context-menu .ctx-item:hover {
     background: #f8f9fa;
 }
+.context-menu .ctx-item.disabled {
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+.context-menu .ctx-item.disabled:hover {
+    background: #ffffff;
+}
 
 .modal-box input[type="number"] {
     width: 100%;
@@ -492,4 +532,53 @@ header {
     padding: 9px 14px;
     border-radius: 6px;
     cursor: pointer;
+}
+
+/* --- ENDGAME --- */
+.endgame-box {
+    max-width: 760px;
+    width: 92vw;
+    text-align: left;
+}
+.endgame-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 12px 0;
+}
+.endgame-tile {
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 10px;
+}
+.endgame-tile.stretch {
+    grid-column: span 2;
+}
+.endgame-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #475569;
+}
+.endgame-value {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: #0f172a;
+}
+.endgame-value.danger {
+    color: #b91c1c;
+}
+.endgame-sub {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-top: 4px;
+}
+.endgame-future {
+    background: #fef3c7;
+    border: 1px solid #facc15;
+    padding: 12px;
+    border-radius: 8px;
+    color: #92400e;
+    font-weight: 600;
 }

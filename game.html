@@ -30,13 +30,17 @@
                 </div>
             </div>
             <div style="display: flex; gap: 10px; align-items: center">
-                <div class="stat-badge bg-green-light">
-                    Balance:
-                    <span id="ui-cash" style="margin-left: 5px">$0</span>
+                <div class="stat-badge badge-liquidity">
+                    <div class="badge-label">Liquidity</div>
+                    <div class="badge-value" id="ui-liquidity">$0</div>
+                    <div class="badge-subtext" id="ui-liquidity-breakdown">
+                        Cash <span id="ui-cash">$0</span> · Emerg <span id="ui-emergency">$0</span> · HYSA <span id="ui-hysa">$0</span> · Vacation <span id="ui-vacation">$0</span>
+                    </div>
                 </div>
-                <div class="stat-badge bg-light">
-                    Savings:
-                    <span id="ui-savings" style="margin-left: 5px">$0</span>
+                <div class="stat-badge badge-nest">
+                    <div class="badge-label">Nest Egg</div>
+                    <div class="badge-value" id="ui-nest-egg">$0</div>
+                    <div class="badge-subtext">Retirement (locked)</div>
                 </div>
                 <div class="stat-badge bg-light" id="debt-badge">
                     Debt:
@@ -50,7 +54,10 @@
                 <div class="stat-badge bg-light qol-badge">
                     <span style="font-weight: 600; color: #1565c0">QoL</span>
                     <div class="qol-bar">
-                        <div id="ui-qol-bar" class="qol-bar-fill" style="width: 50%"></div>
+                        <div
+                            id="ui-qol-bar"
+                            class="qol-bar-fill"
+                            style="width: 50%"></div>
                     </div>
                     <span id="ui-qol-text" class="qol-text">50</span>
                 </div>
@@ -71,13 +78,17 @@
                 <div class="recap-header">
                     <div>
                         <div class="recap-eyebrow">Because you...</div>
-                        <div class="recap-title">Last round's ripple effects</div>
+                        <div class="recap-title">
+                            Last round's ripple effects
+                        </div>
                     </div>
                     <div style="display: flex; gap: 8px; align-items: center">
                         <div class="recap-round">
                             Round <span id="recap-round">-</span>
                         </div>
-                        <button class="btn-ghost" onclick="closeRecap()">Close</button>
+                        <button class="btn-ghost" onclick="closeRecap()">
+                            Close
+                        </button>
                     </div>
                 </div>
                 <ul class="recap-list" id="recap-list">
@@ -101,9 +112,51 @@
                     min="0"
                     step="1"
                     value="0" />
-                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px">
-                    <button class="btn-ghost" onclick="closeWithdrawModal()">Cancel</button>
-                    <button class="btn-primary" onclick="confirmWithdraw()">Confirm</button>
+                <div
+                    style="
+                        display: flex;
+                        gap: 10px;
+                        justify-content: flex-end;
+                        margin-top: 14px;
+                    ">
+                    <button class="btn-ghost" onclick="closeWithdrawModal()">
+                        Cancel
+                    </button>
+                    <button class="btn-primary" onclick="confirmWithdraw()">
+                        Confirm
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="endgame-overlay" class="modal-overlay hidden">
+            <div class="modal-box endgame-box">
+                <h2 style="margin-top: 0">Year Complete</h2>
+                <p id="endgame-reason">You made it through the year. Let's see how you did.</p>
+                <div class="endgame-grid">
+                    <div class="endgame-tile stretch">
+                        <div class="endgame-label">Net Worth</div>
+                        <div class="endgame-value" id="endgame-networth">$0</div>
+                    </div>
+                    <div class="endgame-tile">
+                        <div class="endgame-label">Liquidity</div>
+                        <div class="endgame-value" id="endgame-liquidity">$0</div>
+                        <div class="endgame-sub" id="endgame-breakdown"></div>
+                    </div>
+                    <div class="endgame-tile">
+                        <div class="endgame-label">Nest Egg</div>
+                        <div class="endgame-value" id="endgame-nest">$0</div>
+                        <div class="endgame-sub">Locked retirement balance</div>
+                    </div>
+                    <div class="endgame-tile">
+                        <div class="endgame-label">Debt</div>
+                        <div class="endgame-value danger" id="endgame-debt">$0</div>
+                        <div class="endgame-sub">Subtract this from your total</div>
+                    </div>
+                </div>
+                <div class="endgame-future" id="endgame-future"></div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px">
+                    <button class="btn-primary" onclick="location.reload()">Play Again</button>
                 </div>
             </div>
         </div>

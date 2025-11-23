@@ -32,7 +32,11 @@ const ROUNDS_PER_YEAR = 26;
 const SAVINGS_RATES = {
     emergency: 0.0001 / ROUNDS_PER_YEAR, // 0.01% APY
     hysa: 0.035 / ROUNDS_PER_YEAR, // 3.5% APY
+    vacation: 0.035 / ROUNDS_PER_YEAR, // Match HYSA feel
 };
+const RETIREMENT_BASE_APY = 0.09;
+const RETIREMENT_VOLATILITY = { min: -0.25, max: 1.5 };
+const EMPLOYER_MATCH = { percent: 0.5, capPerRound: 75 };
 
 let state = {
     round: 1,
@@ -46,6 +50,8 @@ let state = {
         retirement: 0,
         other: 0,
     },
+    retirementMatchThisRound: 0,
+    lastMarketFactor: 1,
     scheduledWithdrawals: [],
     debtRecords: [],
     coverage: { health: false },
@@ -75,6 +81,7 @@ let state = {
     homeLogThisRound: null,
     gameOver: false,
     pendingRoundStart: false,
+    pendingEndgame: false,
 };
 let contextMenuOptions = [];
 let withdrawContext = null;
@@ -122,6 +129,39 @@ function savingsBalance(type) {
     return state.savings[type] || 0;
 }
 
+function liquidSavingsTotal() {
+    return (
+        (state.savings.emergency || 0) +
+        (state.savings.hysa || 0) +
+        (state.savings.vacation || 0)
+    );
+}
+
+function nestEggTotal() {
+    return state.savings.retirement || 0;
+}
+
+function liquidityTotal() {
+    return state.cash + liquidSavingsTotal();
+}
+
+function netWorthTotal() {
+    return liquidityTotal() + nestEggTotal() - state.debt;
+}
+
+function retirementFutureStatus(balance) {
+    if (balance >= 4000) {
+        return "Status: Early retirement at 55!";
+    }
+    if (balance >= 2000) {
+        return "Status: On track for 65.";
+    }
+    if (balance >= 500) {
+        return "Status: Comfortable but keep investing.";
+    }
+    return "Status: You will be working until you are 82.";
+}
+
 function monthlyFixedEstimate() {
     const baseHousing = state.home?.cost || 0;
     const utilities = 50;
@@ -147,10 +187,7 @@ function ageCards() {
 function syncDebtCardAmount() {
     const debtCard = state.cards.find((c) => c.meta?.debtCard);
     if (!debtCard) return;
-    const paid = debtCard.payments.reduce(
-        (sum, p) => sum + p.amount,
-        0,
-    );
+    const paid = debtCard.payments.reduce((sum, p) => sum + p.amount, 0);
     debtCard.amount = state.debt + paid;
     debtCard.roundsLeft = 9999;
 }
@@ -167,9 +204,7 @@ function recordDebt(amount, reason, meta = {}) {
 }
 
 function removeDebtRecordByPaymentId(paymentId) {
-    let idx = state.debtRecords.findIndex(
-        (d) => d.paymentId === paymentId,
-    );
+    let idx = state.debtRecords.findIndex((d) => d.paymentId === paymentId);
     if (idx !== -1) {
         state.debt -= state.debtRecords[idx].amount;
         state.debtRecords.splice(idx, 1);
@@ -182,16 +217,18 @@ function init() {
     const salaryDisplay = { hard: 30000, med: 50000, easy: 100000 };
     CONFIG.difficulties.forEach((d) => {
         const annual = salaryDisplay[d.id] || d.pay * 26;
-        dContainer.innerHTML += `<div class="select-card" onclick="setDiff('${d.id}')"><h3>${d.label}</h3><p>$${annual.toLocaleString()} a year ($${d.pay} per paycheck)</p></div>`;
+        dContainer.innerHTML += `<div class="select-card" onclick="setDiff('${
+            d.id
+        }')"><h3>${d.label}</h3><p>$${annual.toLocaleString()} a year ($${
+            d.pay
+        } per paycheck)</p></div>`;
     });
 }
 
 function setDiff(id) {
     state.job = CONFIG.difficulties.find((d) => d.id === id);
     document.getElementById("setup-step-1").classList.add("hidden");
-    document
-        .getElementById("setup-step-2")
-        .classList.remove("hidden");
+    document.getElementById("setup-step-2").classList.remove("hidden");
 
     const hContainer = document.getElementById("housing-options");
     CONFIG.housing.forEach((h) => {
@@ -208,39 +245,54 @@ function setHousing(id) {
 
 function processScheduledWithdrawals() {
     const arriving = [];
-    state.scheduledWithdrawals = state.scheduledWithdrawals.filter(
-        (w) => {
-            if (state.round >= w.roundDue) {
-                arriving.push(w);
-                return false;
-            }
-            return true;
-        },
-    );
+    state.scheduledWithdrawals = state.scheduledWithdrawals.filter((w) => {
+        if (state.round >= w.roundDue) {
+            arriving.push(w);
+            return false;
+        }
+        return true;
+    });
     arriving.forEach((w) => {
         state.cash += w.amount;
-        showToast(
-            `$${w.amount} from ${w.source} landed in your balance.`,
-        );
+        showToast(`$${w.amount} from ${w.source} landed in your balance.`);
     });
 }
 
 function transferGoalBalancesToSavings() {
+    const clearGoalPayments = (type) => {
+        state.cards
+            .filter((c) => c.meta?.savingsType === type)
+            .forEach((c) => (c.payments = []));
+    };
+
     const transfers = [];
     let totalToEmergency = 0;
 
-    ["vacation", "retirement"].forEach((type) => {
-        const bal = savingsBalance(type);
-        if (bal > 0) {
-            totalToEmergency += bal;
-            // Zero out the source bucket and clear its bill stack
-            state.savings[type] = 0;
-            state.cards
-                .filter((c) => c.meta?.savingsType === type)
-                .forEach((c) => (c.payments = []));
-            transfers.push({ type, amount: bal });
-        }
-    });
+    // Vacation savings stay in their own HYSA-like bucket; just clear the UI stack.
+    const vacationBal = savingsBalance("vacation");
+    if (vacationBal > 0) {
+        clearGoalPayments("vacation");
+        transfers.push({
+            type: "vacation",
+            amount: vacationBal,
+            destination: "vacation",
+        });
+    } else {
+        clearGoalPayments("vacation");
+    }
+
+    // Retirement savings stay locked in their own silo; just clear the UI stack.
+    const retirementBal = savingsBalance("retirement");
+    if (retirementBal > 0) {
+        clearGoalPayments("retirement");
+        transfers.push({
+            type: "retirement",
+            amount: retirementBal,
+            destination: "retirement",
+        });
+    } else {
+        clearGoalPayments("retirement");
+    }
 
     if (totalToEmergency > 0) {
         adjustSavings("emergency", totalToEmergency);
@@ -259,14 +311,45 @@ function sweepCashToEmergency() {
     return leftover;
 }
 
+function randomMarketFactor() {
+    const span = RETIREMENT_VOLATILITY.max - RETIREMENT_VOLATILITY.min;
+    const factor = RETIREMENT_VOLATILITY.min + Math.random() * span;
+    state.lastMarketFactor = factor;
+    return factor;
+}
+
+function maybeApplyEmployerMatch(payment) {
+    if (payment.savingsType !== "retirement") return 0;
+    if (payment.type !== "cash") return 0;
+
+    const capLeft = EMPLOYER_MATCH.capPerRound - state.retirementMatchThisRound;
+    if (capLeft <= 0) return 0;
+
+    const match = Math.min(
+        capLeft,
+        Math.round(payment.amount * EMPLOYER_MATCH.percent),
+    );
+    if (match > 0) {
+        adjustSavings("retirement", match);
+        state.retirementMatchThisRound += match;
+        showToast(`Employer matched $${match}! (Free Money)`);
+    }
+    return match;
+}
+
 function applySavingsInterest() {
     const earned = [];
     const emerg = state.savings.emergency || 0;
     const hysa = state.savings.hysa || 0;
-    const emergGain = Math.floor(
-        emerg * SAVINGS_RATES.emergency,
-    );
+    const vacation = state.savings.vacation || 0;
+    const retirementBal = state.savings.retirement || 0;
+    const emergGain = Math.floor(emerg * SAVINGS_RATES.emergency);
     const hysaGain = Math.floor(hysa * SAVINGS_RATES.hysa);
+    const vacationGain = Math.floor(
+        vacation * SAVINGS_RATES.vacation,
+    );
+    let retirementGain = 0;
+    let marketMood = null;
 
     if (emergGain > 0) {
         adjustSavings("emergency", emergGain);
@@ -276,6 +359,43 @@ function applySavingsInterest() {
         adjustSavings("hysa", hysaGain);
         earned.push(`$${hysaGain} in HYSA interest`);
     }
+    if (vacationGain > 0) {
+        adjustSavings("vacation", vacationGain);
+        earned.push(`$${vacationGain} in Vacation HYSA interest`);
+    }
+
+    if (retirementBal > 0) {
+        const factor = randomMarketFactor();
+        const retirementRate = (RETIREMENT_BASE_APY / ROUNDS_PER_YEAR) * factor;
+        retirementGain = Math.floor(retirementBal * retirementRate);
+        retirementGain = Math.max(-retirementBal, retirementGain);
+        if (retirementGain !== 0) {
+            adjustSavings("retirement", retirementGain);
+        }
+        if (factor >= 1.1) {
+            marketMood = "Market Rally! Portfolio up.";
+        } else if (factor <= 0.2) {
+            marketMood = "Market Dip. Portfolio stagnant.";
+        } else if (factor < 0.6) {
+            marketMood = "Market dip. Portfolio wobbled.";
+        }
+        if (retirementGain !== 0) {
+            const dir = retirementGain > 0 ? "+" : "-";
+            earned.push(
+                `Retirement ${
+                    retirementGain > 0 ? "grew" : "lost"
+                } ${dir}$${Math.abs(retirementGain)}`,
+            );
+        } else {
+            earned.push("Retirement held steady this round.");
+        }
+    } else {
+        state.lastMarketFactor = 1;
+    }
+
+    if (marketMood) {
+        earned.unshift(marketMood);
+    }
 
     if (earned.length) {
         showToast(earned.join("; "));
@@ -284,6 +404,7 @@ function applySavingsInterest() {
 
 // --- ROUND LOGIC ---
 function startRound() {
+    state.retirementMatchThisRound = 0;
     processScheduledWithdrawals();
     applySavingsInterest();
 
@@ -339,9 +460,7 @@ function generateCards() {
             });
         }
     } else {
-        state.cards = state.cards.filter(
-            (c) => !(c.meta && c.meta.debtCard),
-        );
+        state.cards = state.cards.filter((c) => !(c.meta && c.meta.debtCard));
     }
 
     // Variable cards (per-round)
@@ -365,202 +484,120 @@ function generateCards() {
     });
 
     // Goals
-    addCard(
-        "goal",
-        "Emergency Fund / Savings",
-        100,
-        true,
-        {
-            note: "0.01% APY; withdraw anytime.",
-            meta: { savingsType: "emergency" },
-        },
-    );
-    addCard(
-        "goal",
-        "High-Yield Savings Account (HYSA)",
-        150,
-        true,
-        {
-            note: "3.5% APY; withdrawals arrive next round.",
-            meta: { savingsType: "hysa" },
-        },
-    );
-    addCard(
-        "goal",
-        "Vacation Fund",
-        50,
-        true,
-        {
-            note: "Rolls into savings at end of round.",
-            meta: { savingsType: "vacation" },
-        },
-    );
-    addCard(
-        "goal",
-        "Retirement Contribution",
-        150,
-        true,
-        {
-            note: "Rolls into savings at end of round.",
-            meta: { savingsType: "retirement" },
-        },
-    );
+    addCard("goal", "Emergency Fund / Savings", 100, true, {
+        note: "0.01% APY; withdraw anytime.",
+        meta: { savingsType: "emergency" },
+    });
+    addCard("goal", "High-Yield Savings Account (HYSA)", 150, true, {
+        note: "3.5% APY; withdrawals arrive next round.",
+        meta: { savingsType: "hysa" },
+    });
+    addCard("goal", "Vacation Fund", 50, true, {
+        note: "HYSA-like rate; withdrawals arrive next round.",
+        meta: { savingsType: "vacation" },
+    });
+    addCard("goal", "Retirement Contribution", 150, true, {
+        note: "Employer match on cash; locked with market swings.",
+        meta: { savingsType: "retirement" },
+    });
 
     // Opportunities (unlocked after a few rounds)
     if (state.round >= OPP_UNLOCK_ROUND) {
         if (state.round % 3 === 1) {
-            addCard(
-                "opp",
-                "Dental Checkup",
-                80,
-                true,
-                {
-                    note: "Small cost now to avoid big dental bill later.",
-                    trackKey: "dentalCheck",
-                },
-            );
+            addCard("opp", "Dental Checkup", 80, true, {
+                note: "Small cost now to avoid big dental bill later.",
+                trackKey: "dentalCheck",
+            });
         }
 
         if (!state.coverage.health) {
-            addCard(
-                "opp",
-                "Enroll: Health Insurance",
-                150,
-                true,
-                {
-                    note: "Pay once to unlock health coverage; monthly premiums will appear.",
-                    onPaid: () => {
-                        state.coverage.health = true;
-                        showToast("Health insurance activated. Premium will recur.");
-                    },
+            addCard("opp", "Enroll: Health Insurance", 150, true, {
+                note: "Pay once to unlock health coverage; monthly premiums will appear.",
+                onPaid: () => {
+                    state.coverage.health = true;
+                    showToast(
+                        "Health insurance activated. Premium will recur.",
+                    );
                 },
-            );
+            });
         } else if (!hasActiveCard("Health Insurance Premium")) {
-            addCard(
-                "fixed",
-                "Health Insurance Premium",
-                150,
-                false,
-                {
-                    note: "Keeps medical events cheaper.",
-                    roundsLeft: 2,
-                },
-            );
+            addCard("fixed", "Health Insurance Premium", 150, false, {
+                note: "Keeps medical events cheaper.",
+                roundsLeft: 2,
+            });
         }
 
         if (!state.flags.bootcampDone && state.round > 4) {
-            addCard(
-                "opp",
-                "Skill Bootcamp",
-                300,
-                true,
-                {
-                    note: "Invest in skills; raises salary ~10%.",
-                    onPaid: () => {
-                        state.flags.bootcampDone = true;
-                        state.job.pay = Math.round(state.job.pay * 1.1);
-                        adjustQoL(-3);
-                        showToast("Bootcamp complete! Salary bumped.");
-                    },
+            addCard("opp", "Skill Bootcamp", 300, true, {
+                note: "Invest in skills; raises salary ~10%.",
+                onPaid: () => {
+                    state.flags.bootcampDone = true;
+                    state.job.pay = Math.round(state.job.pay * 1.1);
+                    adjustQoL(-3);
+                    showToast("Bootcamp complete! Salary bumped.");
                 },
-            );
+            });
         }
 
         if (state.round % 6 === 1) {
-            addCard(
-                "opp",
-                "Ask for a Raise",
-                1,
-                true,
-                {
-                    note: "Drop a $1 bill to try for +5-10% salary.",
-                    onPaid: () => {
-                        const delta = Math.random() < 0.5 ? 0.05 : 0.1;
-                        state.job.pay = Math.round(state.job.pay * (1 + delta));
-                        adjustQoL(-1);
-                        showToast("Negotiation paid off with a raise!");
-                    },
+            addCard("opp", "Ask for a Raise", 1, true, {
+                note: "Drop a $1 bill to try for +5-10% salary.",
+                onPaid: () => {
+                    const delta = Math.random() < 0.5 ? 0.05 : 0.1;
+                    state.job.pay = Math.round(state.job.pay * (1 + delta));
+                    adjustQoL(-1);
+                    showToast("Negotiation paid off with a raise!");
                 },
-            );
+            });
         }
 
-        addCard(
-            "opp",
-            "Overtime Block",
-            1,
-            true,
-            {
-                note: "Drop $1 to work overtime: +$200 cash, QoL -2 (raises burnout risk).",
-                onPaid: () => {
-                    state.cash += 200;
-                    adjustQoL(-2);
-                    state.flags.burnoutRisk += 1;
-                    showToast("Overtime complete: +$200 cash, QoL -2.");
-                },
+        addCard("opp", "Overtime Block", 1, true, {
+            note: "Drop $1 to work overtime: +$200 cash, QoL -2 (raises burnout risk).",
+            onPaid: () => {
+                state.cash += 200;
+                adjustQoL(-2);
+                state.flags.burnoutRisk += 1;
+                showToast("Overtime complete: +$200 cash, QoL -2.");
             },
-        );
+        });
 
         if (isSummer(state.round) && !state.flags.marketHabitActive) {
-            addCard(
-                "opp",
-                "Farmers' Market Habit",
-                30,
-                true,
-                {
-                    note: "Buy local goodies. QoL +1 each summer round while active.",
-                    onPaid: () => {
-                        state.flags.marketHabitActive = true;
-                        adjustQoL(1);
-                        showToast("Market habit started.");
-                    },
+            addCard("opp", "Farmers' Market Habit", 30, true, {
+                note: "Buy local goodies. QoL +1 each summer round while active.",
+                onPaid: () => {
+                    state.flags.marketHabitActive = true;
+                    adjustQoL(1);
+                    showToast("Market habit started.");
                 },
-            );
+            });
         }
 
         if (!state.flags.sideHustleUnlocked && state.round > 2) {
-            addCard(
-                "opp",
-                "Start a Side Hustle",
-                200,
-                true,
-                {
-                    note: "Upfront setup. Unlocks future shift card (+$150, QoL -2).",
-                    onPaid: () => {
-                        state.flags.sideHustleUnlocked = true;
-                        adjustQoL(-2);
-                        showToast("Side hustle unlocked.");
-                    },
+            addCard("opp", "Start a Side Hustle", 200, true, {
+                note: "Upfront setup. Unlocks future shift card (+$150, QoL -2).",
+                onPaid: () => {
+                    state.flags.sideHustleUnlocked = true;
+                    adjustQoL(-2);
+                    showToast("Side hustle unlocked.");
                 },
-            );
+            });
         } else if (state.flags.sideHustleUnlocked) {
-            addCard(
-                "opp",
-                "Take a Side Hustle Shift",
-                1,
-                true,
-                {
-                    note: "Drop a $1 bill to spend time. Gain $150, QoL -2.",
-                    onPaid: () => {
-                        state.cash += 150;
-                        adjustQoL(-2);
-                        showToast("Side hustle shift paid $150.");
-                    },
+            addCard("opp", "Take a Side Hustle Shift", 1, true, {
+                note: "Drop a $1 bill to spend time. Gain $150, QoL -2.",
+                onPaid: () => {
+                    state.cash += 150;
+                    adjustQoL(-2);
+                    showToast("Side hustle shift paid $150.");
                 },
-            );
+            });
         }
     }
 
     if (state.flags.dentalBombPending) {
-        addCard(
-            "event",
-            "Dental Time Bomb",
-            800,
-            false,
-            {
-                note: "Skipping checkups caught up to you.",
-                debtOnMiss: 800,
-            },
-        );
+        addCard("event", "Dental Time Bomb", 800, false, {
+            note: "Skipping checkups caught up to you.",
+            debtOnMiss: 800,
+        });
         adjustQoL(-3);
         state.flags.dentalBombPending = false;
     }
@@ -572,13 +609,7 @@ function generateCards() {
         });
 }
 
-function addCard(
-    type,
-    title,
-    amount,
-    optional = false,
-    options = {},
-) {
+function addCard(type, title, amount, optional = false, options = {}) {
     state.cards.push({
         id: Date.now() + Math.random(),
         type,
@@ -612,28 +643,16 @@ function triggerEvents() {
     // Slip on the Ice (winter)
     if (isWinter(state.round) && Math.random() < 0.15) {
         if (state.coverage.health) {
-            addCard(
-                "event",
-                "Slip on the Ice (Copay)",
-                100,
-                false,
-                {
-                    note: "Health insurance covers most of this injury.",
-                    debtOnMiss: 100,
-                },
-            );
+            addCard("event", "Slip on the Ice (Copay)", 100, false, {
+                note: "Health insurance covers most of this injury.",
+                debtOnMiss: 100,
+            });
             adjustQoL(-3);
         } else {
-            addCard(
-                "event",
-                "Medical Bill: Slip on the Ice",
-                3000,
-                false,
-                {
-                    note: "No insurance — big medical bill hits.",
-                    debtOnMiss: 3000,
-                },
-            );
+            addCard("event", "Medical Bill: Slip on the Ice", 3000, false, {
+                note: "No insurance — big medical bill hits.",
+                debtOnMiss: 3000,
+            });
             adjustQoL(-5);
         }
         state.flags.slipRecoveryRounds = 1;
@@ -641,16 +660,10 @@ function triggerEvents() {
 
     // Winter heating spike
     if (isWinter(state.round) && Math.random() < 0.1) {
-        addCard(
-            "event",
-            "Winter Heating Spike",
-            80,
-            false,
-            {
-                note: "Cold snap drove utilities up this round.",
-                debtOnMiss: 80,
-            },
-        );
+        addCard("event", "Winter Heating Spike", 80, false, {
+            note: "Cold snap drove utilities up this round.",
+            debtOnMiss: 80,
+        });
         adjustQoL(-1);
     }
 
@@ -707,7 +720,7 @@ function triggerEvents() {
             state.flags.layoffRoundsLeft,
             dur,
         );
-        const buffer = savingsTotal() >= monthlyFixedEstimate() * 3;
+        const buffer = liquidityTotal() >= monthlyFixedEstimate() * 3;
         adjustQoL(buffer ? -2 : -6);
         if (!buffer) {
             recordDebt(200, "Borrowed to cover bills during layoff");
@@ -740,38 +753,23 @@ function triggerEvents() {
         const bump = Math.max(10, Math.round(state.home.cost * 0.07));
         state.home.cost += bump;
         state.flags.rentHiked = true;
-        addCard(
-            "opp",
-            "Negotiate Rent Hike",
-            75,
-            true,
-            {
-                note: "Pay to negotiate; success trims the increase.",
-                onPaid: () => {
-                    const reduction = Math.round(bump * 0.5);
-                    state.home.cost = Math.max(
-                        0,
-                        state.home.cost - reduction,
-                    );
-                    showToast("Negotiation helped reduce rent.");
-                },
+        addCard("opp", "Negotiate Rent Hike", 75, true, {
+            note: "Pay to negotiate; success trims the increase.",
+            onPaid: () => {
+                const reduction = Math.round(bump * 0.5);
+                state.home.cost = Math.max(0, state.home.cost - reduction);
+                showToast("Negotiation helped reduce rent.");
             },
-        );
+        });
         showToast("Rent increased at renewal.");
     }
 
     // Car breakdown on the Beltline
     if (Math.random() < 0.08) {
-        addCard(
-            "event",
-            "Car Breakdown",
-            400,
-            false,
-            {
-                note: "Tow + repair. Pay now or it becomes debt.",
-                debtOnMiss: 400,
-            },
-        );
+        addCard("event", "Car Breakdown", 400, false, {
+            note: "Tow + repair. Pay now or it becomes debt.",
+            debtOnMiss: 400,
+        });
         adjustQoL(-4);
     }
 }
@@ -801,10 +799,7 @@ function drop(ev, cardId) {
 
     // Calculate current total paid and cap for variable spending
     const cap = isSavings ? Infinity : card.meta?.max ?? card.amount;
-    let currentPaid = card.payments.reduce(
-        (sum, p) => sum + p.amount,
-        0,
-    );
+    let currentPaid = card.payments.reduce((sum, p) => sum + p.amount, 0);
     let remaining = isSavings ? Infinity : Math.max(0, cap - currentPaid);
 
     if (!isSavings && remaining <= 0) {
@@ -838,28 +833,30 @@ function drop(ev, cardId) {
     // ADD PAYMENT TO STACK (The Undo Hook)
     const paymentId = Date.now();
     const savingsType = card.meta?.savingsType || "other";
-    card.payments.push({
+    const payment = {
         id: paymentId,
         amount: amount,
         type: type,
         savingsType,
-    });
+    };
+    card.payments.push(payment);
 
-    let newPaidTotal = card.payments.reduce(
-        (sum, p) => sum + p.amount,
-        0,
-    );
+    let newPaidTotal = card.payments.reduce((sum, p) => sum + p.amount, 0);
 
     if (type === "credit") {
-        recordDebt(
-            amount,
-            `Credit used on ${card.title}`,
-            { paymentId },
-        );
+        recordDebt(amount, `Credit used on ${card.title}`, { paymentId });
     }
 
     if (card.type === "goal") {
         adjustSavings(savingsType, amount);
+        const matchAmount = maybeApplyEmployerMatch({
+            amount,
+            type,
+            savingsType,
+        });
+        if (matchAmount > 0) {
+            payment.matchAmount = matchAmount;
+        }
     }
 
     if (card.meta?.debtCard) {
@@ -900,10 +897,7 @@ function payFull(cardId) {
     }
 
     const cap = card.meta?.max ?? card.amount;
-    const paidSoFar = card.payments.reduce(
-        (sum, p) => sum + p.amount,
-        0,
-    );
+    const paidSoFar = card.payments.reduce((sum, p) => sum + p.amount, 0);
     const remaining = Math.max(0, cap - paidSoFar);
     if (remaining <= 0) {
         showToast("This card is already maxed out for now.");
@@ -921,11 +915,7 @@ function payFull(cardId) {
             return;
         }
         paymentType = "credit";
-        recordDebt(
-            remaining,
-            `Credit used on ${card.title}`,
-            { paymentId },
-        );
+        recordDebt(remaining, `Credit used on ${card.title}`, { paymentId });
     }
 
     const savingsType = card.meta?.savingsType || "other";
@@ -950,15 +940,8 @@ function payFull(cardId) {
         }
     }
 
-    const newPaidTotal = card.payments.reduce(
-        (sum, p) => sum + p.amount,
-        0,
-    );
-    if (
-        card.onPaid &&
-        !card.fulfilled &&
-        newPaidTotal >= card.amount
-    ) {
+    const newPaidTotal = card.payments.reduce((sum, p) => sum + p.amount, 0);
+    if (card.onPaid && !card.fulfilled && newPaidTotal >= card.amount) {
         card.fulfilled = true;
         try {
             card.onPaid(card);
@@ -988,6 +971,14 @@ function removePayment(cardId, paymentId) {
 
     if (card.type === "goal") {
         adjustSavings(payment.savingsType || "other", -payment.amount);
+        const clawback = payment.matchAmount || 0;
+        if (clawback > 0) {
+            adjustSavings("retirement", -clawback);
+            state.retirementMatchThisRound = Math.max(
+                0,
+                state.retirementMatchThisRound - clawback,
+            );
+        }
     }
 
     // Remove from stack
@@ -1007,22 +998,27 @@ function renderAll() {
     });
 
     state.cards.forEach((card) => {
-        let paid = card.payments.reduce(
-            (sum, p) => sum + p.amount,
-            0,
-        );
+        let paid = card.payments.reduce((sum, p) => sum + p.amount, 0);
         const maxTarget = card.meta?.max ?? card.amount;
         const baseTarget = card.meta?.base ?? card.amount;
         const isVariable = card.type === "var";
         const isSavings = !!card.meta?.savingsType;
-        const savingsBal = isSavings ? savingsBalance(card.meta.savingsType) : 0;
+        const isRetirement =
+            isSavings && card.meta.savingsType === "retirement";
+        const savingsBal = isSavings
+            ? savingsBalance(card.meta.savingsType)
+            : 0;
         let progress = isSavings ? 0 : Math.min(100, (paid / maxTarget) * 100);
         let isDone = isVariable
             ? paid >= baseTarget
             : isSavings
-                ? false
-                : paid >= card.amount;
-        const hideDrop = isSavings ? false : isVariable ? paid >= maxTarget : isDone;
+            ? false
+            : paid >= card.amount;
+        const hideDrop = isSavings
+            ? false
+            : isVariable
+            ? paid >= maxTarget
+            : isDone;
         const debtRisk =
             card.type === "fixed" ||
             card.debtOnMiss !== null ||
@@ -1040,14 +1036,11 @@ function renderAll() {
 
         let dueText = "";
         if (debtRisk) {
-            const roundsLeft = card.meta?.debtCard
-                ? 0
-                : card.roundsLeft ?? 1;
+            const roundsLeft = card.meta?.debtCard ? 0 : card.roundsLeft ?? 1;
             if (card.meta?.debtCard) {
                 dueText = "Due: pay down anytime (existing debt).";
             } else if (roundsLeft <= 1) {
-                dueText =
-                    "Due this round.";
+                dueText = "Due this round.";
             } else {
                 const weeks = roundsLeft * 2;
                 dueText = `Due in ${weeks} week${weeks === 1 ? "" : "s"}.`;
@@ -1062,19 +1055,22 @@ function renderAll() {
         const displayAmount = isSavings
             ? `Balance: $${savingsBal}`
             : isVariable
-                ? `Up to $${maxTarget}`
-                : `$${card.amount}`;
+            ? `Up to $${maxTarget}`
+            : `$${card.amount}`;
         const footerText = isSavings
-            ? card.meta.savingsType === "hysa"
+            ? card.meta.savingsType === "hysa" ||
+              card.meta.savingsType === "vacation"
                 ? "3.5% APY; withdrawals land next round."
-                : "0.01% APY; withdraw anytime."
+                : card.meta.savingsType === "retirement"
+                    ? "Volatile market returns; locked until retirement. Cash gets employer match."
+                    : "0.01% APY; withdraw anytime."
             : isVariable
-                ? isDone
-                    ? `QoL covered (spent $${paid})`
-                    : `$${Math.max(0, baseTarget - paid)} until QoL holds`
-                : isDone
-                    ? "Paid!"
-                    : `$${Math.max(0, card.amount - paid)} left`;
+            ? isDone
+                ? `QoL covered (spent $${paid})`
+                : `$${Math.max(0, baseTarget - paid)} until QoL holds`
+            : isDone
+            ? "Paid!"
+            : `$${Math.max(0, card.amount - paid)} left`;
 
         // Generate Mini-Bills HTML
         let stackHtml = card.payments
@@ -1095,7 +1091,9 @@ function renderAll() {
             .join("");
 
         let html = `
-            <div class="game-card ${card.type} ${isDone ? "paid-full" : ""}" ${contextAttr}>
+            <div class="game-card ${card.type} ${
+            isDone ? "paid-full" : ""
+        }" ${contextAttr}>
                 <div class="card-top">
                     <span class="card-title">${cautionHtml}${card.title}</span>
                     <span style="font-weight:bold">${displayAmount}</span>
@@ -1105,7 +1103,9 @@ function renderAll() {
                 ${
                     !hideDrop
                         ? `
-                <div class="drop-zone" ondrop="drop(event, ${card.id})" ondragover="allowDrop(event)" ondragleave="leaveDrop(event)">
+                <div class="drop-zone" ondrop="drop(event, ${
+                    card.id
+                })" ondragover="allowDrop(event)" ondragleave="leaveDrop(event)">
                     Drop Here
                 </div>
                 ${
@@ -1125,7 +1125,11 @@ function renderAll() {
                            </div>`
                         : isSavings
                             ? `<div style="font-size:0.8rem; color:#777; margin-top:6px;">
-                            Drop cash to deposit. Right-click for withdrawals.
+                            ${
+                                isRetirement
+                                    ? "Cash contributions only. Employer match applies; funds are locked."
+                                    : "Drop cash to deposit. Right-click for withdrawals."
+                            }
                            </div>`
                         : ""
                 }
@@ -1146,33 +1150,46 @@ function renderAll() {
                 </div>
             </div>
         `;
-        document.getElementById(
-            `col-${card.type}-content`,
-        ).innerHTML += html;
+        document.getElementById(`col-${card.type}-content`).innerHTML += html;
     });
     renderLog();
 }
 
 function updateHeader() {
+    const fmt = (val) => `$${Math.round(val).toLocaleString()}`;
+    const cash = state.cash;
+    const emerg = state.savings.emergency || 0;
+    const hysa = state.savings.hysa || 0;
+    const vacation = state.savings.vacation || 0;
+    const liquidity = liquidityTotal();
+    const nestEgg = nestEggTotal();
+
     document.getElementById("ui-round").innerText = state.round;
-    document.getElementById("ui-cash").innerText = `$${state.cash}`;
-    document.getElementById("ui-debt").innerText = `$${state.debt}`;
-    document.getElementById("ui-debt-count").innerText = `${
-        state.debtRecords.length
-    }`;
+    document.getElementById("ui-liquidity").innerText =
+        fmt(liquidity);
+    document.getElementById("ui-cash").innerText = fmt(cash);
+    document.getElementById("ui-emergency").innerText =
+        fmt(emerg);
+    document.getElementById("ui-hysa").innerText = fmt(hysa);
+    document.getElementById("ui-vacation").innerText =
+        fmt(vacation);
+    document.getElementById("ui-nest-egg").innerText =
+        fmt(nestEgg);
+    document.getElementById("ui-debt").innerText = fmt(state.debt);
+    document.getElementById(
+        "ui-debt-count",
+    ).innerText = `${state.debtRecords.length}`;
     document.getElementById("debt-badge").title =
         state.debtRecords.length === 0
             ? "No debt currently"
             : state.debtRecords
                   .map((d) => `${d.reason}: $${d.amount}`)
                   .join("\n");
-    document.getElementById(
-        "ui-savings",
-    ).innerText = `$${savingsTotal()} (HYSA $${state.savings.hysa})`;
     document.getElementById("ui-qol-text").innerText = state.qol;
-    document.getElementById(
-        "ui-qol-bar",
-    ).style.width = `${Math.max(0, Math.min(100, state.qol))}%`;
+    document.getElementById("ui-qol-bar").style.width = `${Math.max(
+        0,
+        Math.min(100, state.qol),
+    )}%`;
 }
 
 function renderLog() {
@@ -1207,10 +1224,28 @@ function openCardMenu(ev, cardId) {
 
     const options = [];
     if (card.meta.savingsType === "emergency") {
-        options.push({ label: "Withdraw money", action: () => openWithdrawModal("emergency", cardId) });
+        options.push({
+            label: "Withdraw money",
+            action: () => openWithdrawModal("emergency", cardId),
+        });
     }
     if (card.meta.savingsType === "hysa") {
-        options.push({ label: "Schedule withdrawal", action: () => openWithdrawModal("hysa", cardId) });
+        options.push({
+            label: "Schedule withdrawal",
+            action: () => openWithdrawModal("hysa", cardId),
+        });
+    }
+    if (card.meta.savingsType === "vacation") {
+        options.push({
+            label: "Schedule withdrawal",
+            action: () => openWithdrawModal("vacation", cardId),
+        });
+    }
+    if (card.meta.savingsType === "retirement") {
+        options.push({
+            label: "Locked until retirement (Age 59½)",
+            disabled: true,
+        });
     }
 
     if (options.length === 0) return;
@@ -1220,7 +1255,7 @@ function openCardMenu(ev, cardId) {
     menu.innerHTML = options
         .map(
             (opt, idx) =>
-                `<div class="ctx-item" onclick="selectCardMenuOption(${idx})">${opt.label}</div>`,
+                `<div class="ctx-item ${opt.disabled ? "disabled" : ""}" ${opt.disabled ? "" : `onclick="selectCardMenuOption(${idx})"`}>${opt.label}</div>`,
         )
         .join("");
     menu.style.left = `${ev.pageX}px`;
@@ -1236,14 +1271,19 @@ function closeCardMenu() {
 
 function selectCardMenuOption(idx) {
     const opt = contextMenuOptions[idx];
+    if (!opt || opt.disabled) return;
     closeCardMenu();
-    if (opt && typeof opt.action === "function") opt.action();
+    if (typeof opt.action === "function") opt.action();
 }
 
 document.addEventListener("click", () => closeCardMenu());
 
 function openWithdrawModal(type, cardId) {
     closeCardMenu();
+    if (type === "retirement") {
+        showToast("Retirement funds are locked until retirement age (59½).");
+        return;
+    }
     const balance = savingsBalance(type);
     if (balance <= 0) {
         showToast("No savings available to withdraw.");
@@ -1254,13 +1294,20 @@ function openWithdrawModal(type, cardId) {
     document.getElementById("withdraw-title").innerText =
         type === "hysa"
             ? "Schedule HYSA Withdrawal"
-            : "Withdraw from Emergency Fund";
+            : type === "vacation"
+                ? "Schedule Vacation Withdrawal"
+                : "Withdraw from Emergency Fund";
     document.getElementById("withdraw-desc").innerText =
         type === "hysa"
             ? `Available: $${balance}. Scheduled funds land at the start of next round.`
-            : `Available: $${balance}. Withdrawals arrive immediately.`;
+            : type === "vacation"
+                ? `Available: $${balance}. Vacation HYSA funds land next round.`
+                : `Available: $${balance}. Withdrawals arrive immediately.`;
     const input = document.getElementById("withdraw-amount");
-    input.value = Math.min(balance, Math.max(0, Number(input.value) || balance));
+    input.value = Math.min(
+        balance,
+        Math.max(0, Number(input.value) || balance),
+    );
     input.max = balance;
     modal.classList.remove("hidden");
 }
@@ -1297,6 +1344,14 @@ function confirmWithdraw() {
             roundDue: state.round + 2,
         });
         showToast(`Scheduled $${amt} from HYSA for next round.`);
+    } else if (withdrawContext.type === "vacation") {
+        adjustSavings("vacation", -amt);
+        state.scheduledWithdrawals.push({
+            amount: amt,
+            source: "Vacation Fund",
+            roundDue: state.round + 2,
+        });
+        showToast(`Scheduled $${amt} from Vacation Fund for next round.`);
     }
 
     closeWithdrawModal();
@@ -1313,10 +1368,53 @@ function closeRecap() {
     const modal = document.getElementById("recap-modal");
     modal.classList.remove("show");
 
-    if (state.pendingRoundStart && !state.gameOver) {
-        state.pendingRoundStart = false;
+    const shouldStartRound =
+        state.pendingRoundStart && !state.gameOver;
+    const shouldShowEndgame =
+        state.pendingEndgame && state.gameOver;
+
+    state.pendingRoundStart = false;
+
+    if (shouldStartRound) {
         startRound();
+    } else if (shouldShowEndgame) {
+        state.pendingEndgame = false;
+        showEndgameSummary();
     }
+}
+
+function showEndgameSummary() {
+    const overlay = document.getElementById("endgame-overlay");
+    if (!overlay) return;
+
+    const liquidity = liquidityTotal();
+    const nestEgg = nestEggTotal();
+    const netWorth = netWorthTotal();
+    const cash = state.cash;
+    const emerg = state.savings.emergency || 0;
+    const hysa = state.savings.hysa || 0;
+    const vacation = state.savings.vacation || 0;
+    const fmt = (val) => `$${Math.round(val).toLocaleString()}`;
+
+    document.getElementById("endgame-networth").innerText =
+        fmt(netWorth);
+    document.getElementById("endgame-liquidity").innerText =
+        fmt(liquidity);
+    document.getElementById("endgame-nest").innerText =
+        fmt(nestEgg);
+    document.getElementById("endgame-debt").innerText =
+        fmt(state.debt);
+    document.getElementById("endgame-breakdown").innerText =
+        `Cash $${cash.toLocaleString()} · Emerg $${emerg.toLocaleString()} · HYSA $${hysa.toLocaleString()} · Vacation $${vacation.toLocaleString()}`;
+    document.getElementById("endgame-future").innerText =
+        retirementFutureStatus(nestEgg);
+    const reasonEl = document.getElementById("endgame-reason");
+    if (reasonEl) {
+        reasonEl.innerText =
+            "Year complete! Here's your net worth snapshot.";
+    }
+
+    overlay.classList.remove("hidden");
 }
 
 function buildRoundLog(unpaidFixed, extraLogs = []) {
@@ -1325,10 +1423,7 @@ function buildRoundLog(unpaidFixed, extraLogs = []) {
 
     state.cards.forEach((card) => {
         if (card.meta?.savingsType) return;
-        const paid = card.payments.reduce(
-            (sum, p) => sum + p.amount,
-            0,
-        );
+        const paid = card.payments.reduce((sum, p) => sum + p.amount, 0);
         const creditPaid = card.payments
             .filter((p) => p.type === "credit")
             .reduce((sum, p) => sum + p.amount, 0);
@@ -1352,9 +1447,7 @@ function buildRoundLog(unpaidFixed, extraLogs = []) {
                 );
             }
 
-            if (
-                card.title.toLowerCase().includes("emergency fund")
-            ) {
+            if (card.title.toLowerCase().includes("emergency fund")) {
                 log.push(
                     "Because you built your emergency fund, a surprise won't wreck your credit.",
                 );
@@ -1373,10 +1466,7 @@ function buildRoundLog(unpaidFixed, extraLogs = []) {
     });
 
     unpaidFixed.forEach((card) => {
-        const paid = card.payments.reduce(
-            (sum, p) => sum + p.amount,
-            0,
-        );
+        const paid = card.payments.reduce((sum, p) => sum + p.amount, 0);
         const missed = card.amount - paid;
         const penalty = missed + 50;
         log.push(
@@ -1395,13 +1485,10 @@ function buildRoundLog(unpaidFixed, extraLogs = []) {
 
 function getSpendForCategory(category) {
     return state.cards
-        .filter(
-            (c) => c.meta && c.meta.category === category,
-        )
+        .filter((c) => c.meta && c.meta.category === category)
         .reduce(
             (sum, card) =>
-                sum +
-                card.payments.reduce((s, p) => s + p.amount, 0),
+                sum + card.payments.reduce((s, p) => s + p.amount, 0),
             0,
         );
 }
@@ -1451,17 +1538,16 @@ function processVariableSpending() {
                 // Entertainment tolerates one light round before slipping
                 penalty =
                     tracker.missedRounds >= 2
-                        ? Math.min(
-                              12,
-                              3 * (tracker.missedRounds - 1) + 1,
-                          )
+                        ? Math.min(12, 3 * (tracker.missedRounds - 1) + 1)
                         : 0;
             }
 
             if (penalty > 0) {
                 qolDelta -= penalty;
                 effects.push(
-                    `Because you underfunded ${rules.title.toLowerCase()} for ${tracker.missedRounds} round(s), QoL fell by ${penalty}.`,
+                    `Because you underfunded ${rules.title.toLowerCase()} for ${
+                        tracker.missedRounds
+                    } round(s), QoL fell by ${penalty}.`,
                 );
             } else {
                 effects.push(
@@ -1475,6 +1561,7 @@ function processVariableSpending() {
 }
 
 function nextRound() {
+    if (state.gameOver) return;
     const debtCards = state.cards.filter((c) => {
         const paid = c.payments.reduce((s, p) => s + p.amount, 0);
         return (
@@ -1496,9 +1583,7 @@ function nextRound() {
             const paid = c.payments.reduce((s, p) => s + p.amount, 0);
             const baseOwed = c.amount - paid;
             const debtAdd =
-                c.debtOnMiss !== null
-                    ? c.debtOnMiss
-                    : baseOwed + 50;
+                c.debtOnMiss !== null ? c.debtOnMiss : baseOwed + 50;
             const reason =
                 c.type === "fixed"
                     ? `Unpaid ${c.title} (includes $50 penalty)`
@@ -1513,14 +1598,9 @@ function nextRound() {
     adjustQoL(variableOutcome.qolDelta);
 
     // Preventive care tracking
-    const dentalCard = state.cards.find(
-        (c) => c.trackKey === "dentalCheck",
-    );
+    const dentalCard = state.cards.find((c) => c.trackKey === "dentalCheck");
     if (dentalCard) {
-        const paid = dentalCard.payments.reduce(
-            (s, p) => s + p.amount,
-            0,
-        );
+        const paid = dentalCard.payments.reduce((s, p) => s + p.amount, 0);
         if (paid >= dentalCard.amount) {
             state.flags.dentalMisses = 0;
         } else {
@@ -1533,19 +1613,24 @@ function nextRound() {
     }
 
     const transferred = transferGoalBalancesToSavings();
-    const transferLogs = transferred.map((t) => {
-        const label =
-            t.type === "vacation"
-                ? "vacation fund"
-                : "retirement contribution";
-        return `Because you set aside money for ${label}, $${t.amount} rolled into savings for next round's interest.`;
-    });
+    const transferLogs = [];
 
     if (transferred.length > 0) {
         const msg = transferred
-            .map((t) => `${t.type === "vacation" ? "Vacation" : "Retirement"}: $${t.amount}`)
+            .map((t) => {
+                if (t.type === "vacation") {
+                    transferLogs.push(
+                        `Because you set aside money for your vacation fund, $${t.amount} stays in your HYSA-style trip fund earning interest and can be scheduled for next round.`,
+                    );
+                    return `Vacation HYSA: $${t.amount}`;
+                }
+                transferLogs.push(
+                    `Because you invested for retirement, $${t.amount} stays locked in your nest egg earning market returns.`,
+                );
+                return `Retirement locked: $${t.amount}`;
+            })
             .join(" | ");
-        showToast(`Auto-transfer to savings: ${msg}`);
+        showToast(`Savings update: ${msg}`);
     }
 
     const sweptCash = sweepCashToEmergency();
@@ -1569,17 +1654,17 @@ function nextRound() {
     state.homeLogThisRound = null;
 
     const upcomingRound = state.round + 2;
+    const finishedYear = upcomingRound > 26;
 
     // Show recap modal automatically at the end of the round.
     renderAll();
     state.round = upcomingRound;
     state.pendingRoundStart = state.round <= 26 && !state.gameOver;
-    openRecap();
-
-    if (state.round > 26) {
-        alert("Game Over! Quality of Life: " + state.qol);
-        location.reload();
+    state.pendingEndgame = finishedYear;
+    if (finishedYear) {
+        state.gameOver = true;
     }
+    openRecap();
 }
 
 function showToast(msg) {
