@@ -160,6 +160,7 @@ let state = {
         bedbugRisk: false,
         brokenPhone: false,
         taxRefundClaimed: false,
+        offeredVictory: false,
     },
     eventLog: [],
     job: null,
@@ -1756,6 +1757,12 @@ function closeRecap() {
     const modal = document.getElementById("recap-modal");
     modal.classList.remove("show");
 
+    // Check if we should offer victory choice (completed 52 weeks)
+    if (state.flags.offeredVictory && state.round > 26 && !state.gameOver) {
+        showVictoryChoice();
+        return;
+    }
+
     const shouldStartRound =
         state.pendingRoundStart && !state.gameOver;
     const shouldShowEndgame =
@@ -1771,7 +1778,28 @@ function closeRecap() {
     }
 }
 
-function showEndgameSummary() {
+function showVictoryChoice() {
+    const continueGame = confirm(
+        "Congratulations! You've survived 52 weeks (1 full year)!\n\n" +
+        "You can:\n" +
+        "• Click OK to EXIT and see your victory recap\n" +
+        "• Click Cancel to CONTINUE playing\n\n" +
+        "What would you like to do?"
+    );
+
+    if (continueGame) {
+        // Player wants to exit - they WIN!
+        state.gameOver = true;
+        state.pendingEndgame = true;
+        showEndgameSummary(true); // Pass true to indicate victory
+    } else {
+        // Player wants to continue
+        state.flags.offeredVictory = false; // Reset so they can be offered again later if desired
+        startRound();
+    }
+}
+
+function showEndgameSummary(isVictory = false) {
     const overlay = document.getElementById("endgame-overlay");
     if (!overlay) return;
 
@@ -1798,8 +1826,9 @@ function showEndgameSummary() {
         retirementFutureStatus(nestEgg);
     const reasonEl = document.getElementById("endgame-reason");
     if (reasonEl) {
-        reasonEl.innerText =
-            "Year complete! Here's your net worth snapshot.";
+        reasonEl.innerText = isVictory
+            ? "🎉 VICTORY! You made it through a full year! Here's your final snapshot."
+            : "Year complete! Here's your net worth snapshot.";
     }
 
     overlay.classList.remove("hidden");
@@ -2073,11 +2102,19 @@ function nextRound() {
     // Show recap modal automatically at the end of the round.
     renderAll();
     state.round = upcomingRound;
-    state.pendingRoundStart = state.round <= 26 && !state.gameOver;
-    state.pendingEndgame = finishedYear;
-    if (finishedYear) {
-        state.gameOver = true;
+
+    // After completing 52 weeks (26 rounds), offer choice to continue or exit
+    if (finishedYear && !state.flags.offeredVictory) {
+        state.flags.offeredVictory = true;
+        state.pendingRoundStart = false;
+        state.pendingEndgame = false;
+        openRecap();
+        // Will show victory choice after recap is closed
+        return;
     }
+
+    state.pendingRoundStart = !state.gameOver;
+    state.pendingEndgame = false;
     openRecap();
 }
 
