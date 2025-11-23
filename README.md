@@ -1,4 +1,4 @@
-# Badger Budget: Planning Edition
+# Badger Budget: A Financial Literacy Game
 
 An in-browser budgeting game that simulates a year of financial tradeoffs: paying fixed bills, handling surprise events, growing savings, and balancing quality of life. It is entirely client-side (HTML/CSS/JS); no build step required.
 
