@@ -147,6 +147,7 @@ const SAVINGS_RATES = {
 const RETIREMENT_BASE_APY = 0.09;
 const RETIREMENT_VOLATILITY = { min: -0.25, max: 1.5 };
 const EMPLOYER_MATCH = { percent: 0.5, capPerRound: 75 };
+const DEBT_INTEREST_RATE = 0.02; // 2% per round (~52% APR for typical credit card)
 
 let state = {
     round: 1,
@@ -175,6 +176,14 @@ let state = {
     scheduledWithdrawals: [],
     debtRecords: [],
     coverage: { health: false },
+    stats: {
+        totalInterestPaid: 0,
+        consecutiveInterestRounds: 0,
+        lastRoundDebt: 0,
+    },
+    streak: 0,
+    maxStreak: 0,
+    riskyInvestmentLogs: [],
     flags: {
         rentHiked: false,
         sideHustleUnlocked: false,
@@ -614,6 +623,51 @@ function maybeApplyEmployerMatch(payment) {
     return match;
 }
 
+function applyDebtInterest() {
+    if (state.debt <= 0) {
+        state.stats.consecutiveInterestRounds = 0;
+        state.stats.lastRoundDebt = 0;
+        return 0;
+    }
+
+    const oldDebt = state.debt;
+    const interestCharge = Math.round(state.debt * DEBT_INTEREST_RATE);
+
+    if (interestCharge > 0) {
+        // Add interest to total debt
+        state.debt += interestCharge;
+
+        // Record as a specific debt item
+        state.debtRecords.push({
+            id: Date.now() + Math.random(),
+            amount: interestCharge,
+            reason: `Compound Interest (${Math.round(DEBT_INTEREST_RATE * 100)}%)`,
+            type: 'interest',
+        });
+
+        // Update stats
+        state.stats.totalInterestPaid += interestCharge;
+
+        // Track if debt is growing due to interest
+        if (state.stats.lastRoundDebt > 0 && oldDebt >= state.stats.lastRoundDebt) {
+            state.stats.consecutiveInterestRounds += 1;
+        } else {
+            state.stats.consecutiveInterestRounds = 1;
+        }
+        state.stats.lastRoundDebt = state.debt;
+
+        // Sync the debt card if it exists
+        syncDebtCardAmount();
+
+        // Show toast notification
+        showToast(`Interest applied: Your debt grew by $${interestCharge}.`);
+
+        return interestCharge;
+    }
+
+    return 0;
+}
+
 function applySavingsInterest() {
     const earned = [];
     const emerg = state.savings.emergency || 0;
@@ -689,6 +743,12 @@ function startRound() {
     state.creditRoundNotes = [];
     state.retirementMatchThisRound = 0;
     processScheduledWithdrawals();
+
+    // Apply compound interest on debt BEFORE paycheck
+    const interestThisRound = applyDebtInterest();
+    // Store for round log
+    state.lastInterestCharge = interestThisRound;
+
     applySavingsInterest();
 
     if (state.flags.layoffRoundsLeft > 0) {
@@ -944,6 +1004,55 @@ function generateCards() {
                     showToast(
                         "Payday loan deposited: +$200 now, $260 debt added.",
                     );
+                },
+            });
+        }
+
+        // Risky Investments (only after Round 6, 30% spawn chance)
+        if (state.round >= 6 && Math.random() < 0.3) {
+            const riskyOptions = [
+                { title: "🎰 Meme Stock Tip", cost: 200 },
+                { title: "📉 New Crypto Coin", cost: 150 },
+                { title: "🚀 Speculative Tech Startup", cost: 500 },
+            ];
+            const chosen = riskyOptions[Math.floor(Math.random() * riskyOptions.length)];
+
+            addCard("opp", chosen.title, chosen.cost, true, {
+                note: "⚠️ High Risk / High Reward. You could lose it all.",
+                meta: { riskyInvestment: true, investmentCost: chosen.cost },
+                onPaid: (card) => {
+                    const roll = Math.random();
+                    const investment = card.meta.investmentCost;
+                    let result, message, logMessage;
+
+                    if (roll < 0.4) {
+                        // 40% chance: Total loss
+                        result = 0;
+                        message = "💥 Rug pulled! Value went to $0.";
+                        logMessage = `Because you speculated on ${card.title}, you lost your entire $${investment} principal. Speculation is not investing.`;
+                    } else if (roll < 0.8) {
+                        // 40% chance: Partial loss (50-80% back)
+                        const returnPercent = 0.5 + Math.random() * 0.3;
+                        result = Math.round(investment * returnPercent);
+                        state.cash += result;
+                        message = `📉 Market dipped. You panic-sold at a loss. Recovered $${result} of $${investment}.`;
+                        logMessage = `Because you panic-sold your ${card.title}, you recovered only $${result} of your $${investment} investment.`;
+                    } else {
+                        // 20% chance: Big win (3x-5x)
+                        const multiplier = 3 + Math.random() * 2;
+                        result = Math.round(investment * multiplier);
+                        state.cash += result;
+                        message = `🚀 To the Moon! You ${multiplier.toFixed(1)}x your money: +$${result}!`;
+                        logMessage = `Because you got lucky on ${card.title}, you made a quick profit of $${result - investment} (this time). Don't count on this happening again.`;
+                    }
+
+                    showToast(message);
+
+                    // Store the log message for the round recap
+                    if (!state.riskyInvestmentLogs) {
+                        state.riskyInvestmentLogs = [];
+                    }
+                    state.riskyInvestmentLogs.push(logMessage);
                 },
             });
         }
@@ -1827,6 +1936,21 @@ function updateHeader() {
         0,
         Math.min(100, state.qol),
     )}%`;
+
+    // Update streak counter
+    const streakEl = document.getElementById("ui-streak");
+    const streakBadge = document.getElementById("streak-badge");
+    streakEl.innerText = state.streak;
+    if (state.streak === 0) {
+        streakBadge.style.opacity = "0.5";
+        streakBadge.style.color = "#999";
+    } else {
+        streakBadge.style.opacity = "1";
+        streakBadge.style.color = "#ff5722";
+    }
+    streakBadge.title = state.maxStreak > 0
+        ? `Current: ${state.streak} | Best: ${state.maxStreak}`
+        : "Build a streak by avoiding debt and paying bills on time!";
 }
 
 function renderLog() {
@@ -2110,6 +2234,24 @@ function showEndgameSummary(isVictory = false) {
 
 function buildRoundLog(unpaidFixed, extraLogs = []) {
     const log = [];
+
+    // Educational messages about compound interest
+    if (state.lastInterestCharge && state.lastInterestCharge > 0) {
+        const oldDebt = state.stats.lastRoundDebt - state.lastInterestCharge;
+
+        if (state.stats.consecutiveInterestRounds >= 3) {
+            // Snowball effect warning
+            log.push(
+                `Because you've carried debt for ${state.stats.consecutiveInterestRounds} consecutive rounds, compound interest is working against you. Your debt is growing faster than you're paying it down. The $${state.lastInterestCharge} in interest this round was added on top of your existing balance.`
+            );
+        } else {
+            // Standard interest explanation
+            log.push(
+                `Because you carried a balance of $${Math.round(oldDebt)}, interest charges added $${state.lastInterestCharge} to your burden. This is the 'cost' of borrowing—it compounds every round you carry a balance.`
+            );
+        }
+    }
+
     let totalCredit = 0;
 
     state.cards.forEach((card) => {
@@ -2386,8 +2528,69 @@ function evaluateCreditScore(debtCards) {
     return logs;
 }
 
+function evaluateStreak(missedFixedBills, debtAtStart) {
+    const logs = [];
+    const debtAtEnd = state.debt;
+
+    // Check for streak breakers
+    let streakBroken = false;
+    let breakReason = "";
+
+    // Breaker 1: New debt (debt increased)
+    if (debtAtEnd > debtAtStart) {
+        streakBroken = true;
+        breakReason = "used credit or accumulated new debt";
+    }
+
+    // Breaker 2: Missed fixed bills
+    if (missedFixedBills.length > 0) {
+        streakBroken = true;
+        breakReason = breakReason
+            ? breakReason + " and missed bills"
+            : "missed a bill";
+    }
+
+    if (streakBroken) {
+        // Reset streak
+        if (state.streak > 0) {
+            logs.push(
+                `Because you ${breakReason}, your ${state.streak}-round streak was broken. Building consistency takes discipline!`
+            );
+        }
+        state.streak = 0;
+    } else {
+        // Increment streak
+        state.streak += 1;
+        if (state.streak > state.maxStreak) {
+            state.maxStreak = state.streak;
+        }
+
+        logs.push(
+            `Because you avoided new debt and paid all bills, your streak grew to ${state.streak} round${state.streak === 1 ? '' : 's'}. Keep it going!`
+        );
+
+        // Check for milestone rewards (every 4 rounds)
+        if (state.streak > 0 && state.streak % 4 === 0) {
+            const bonus = 50;
+            const qolBoost = 5;
+            state.cash += bonus;
+            adjustQoL(qolBoost);
+            showToast(`🔥 ${state.streak}-Round Streak! You earned a Consistency Bonus: +$${bonus} cash, +${qolBoost} QoL`);
+            logs.push(
+                `Because you maintained consistency for ${state.streak} rounds, you earned a Consistency Bonus: $${bonus} cash and +${qolBoost} QoL. This represents money saved on late fees and peace of mind.`
+            );
+        }
+    }
+
+    return logs;
+}
+
 function nextRound() {
     if (state.gameOver) return;
+
+    // Capture debt at the start of round for streak evaluation
+    const debtAtRoundStart = state.debt;
+
     const debtCards = state.cards.filter((c) => {
         const paid = c.payments.reduce((s, p) => s + p.amount, 0);
         return (
@@ -2475,17 +2678,40 @@ function nextRound() {
     const creditLogs = evaluateCreditScore(debtCards);
 
     const finishingRound = state.round;
+
+    // Evaluate streak before building final log
+    const missedFixedBills = debtCards.filter((c) => c.type === "fixed");
+    const streakLogs = evaluateStreak(missedFixedBills, debtAtRoundStart);
+
+    // Add risky investment logs and educational comparison
+    const riskyLogs = state.riskyInvestmentLogs || [];
+    const educationalLogs = [];
+
+    // If both risky investment and retirement happened this round, add comparison
+    if (riskyLogs.length > 0 && transferred.some(t => t.type === "retirement")) {
+        const retirementGrowth = state.lastMarketFactor >= 1 ? "grew steadily" : "held steady";
+        educationalLogs.push(
+            `Educational Note: Your retirement account ${retirementGrowth} via compound interest and market returns, while your speculative bet was pure volatility. One builds wealth; the other is gambling.`
+        );
+    }
+
     const roundLog = buildRoundLog(
-        debtCards.filter((c) => c.type === "fixed"),
+        missedFixedBills,
         variableOutcome.effects.concat(
             choiceLogs,
             transferLogs,
             sweepLogs,
             cashBackLogs,
             creditLogs,
+            streakLogs,
+            riskyLogs,
+            educationalLogs,
             state.creditRoundNotes || [],
         ),
     );
+
+    // Clear risky investment logs for next round
+    state.riskyInvestmentLogs = [];
     const upcomingRound = state.round + 1;
     const holidayWarning = holidayForRound(upcomingRound);
     if (holidayWarning) {
