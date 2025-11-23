@@ -893,10 +893,13 @@ function generateCards() {
         if (debtCard) {
             syncDebtCardAmount();
         } else {
-            addCard("fixed", "Debt Balance", state.debt, false, {
-                note: "Pay with cash to reduce your debt.",
+            addCard("goal", "Debt", state.debt, false, {
+                note: "Pay at least the minimum to protect your credit.",
                 roundsLeft: 9999,
-                meta: { debtCard: true },
+                meta: { 
+                    debtCard: true,
+                    minPayment: Math.max(15, Math.ceil(state.debt * 0.03))
+                },
             });
         }
     } else {
@@ -1839,7 +1842,8 @@ function renderAll() {
         if (debtRisk) {
             const roundsLeft = card.meta?.debtCard ? 0 : card.roundsLeft ?? 1;
             if (card.meta?.debtCard) {
-                dueText = "Due: pay down anytime (existing debt).";
+                const min = card.meta.minPayment || 0;
+                dueText = `Min Due: $${min}`;
             } else if (roundsLeft <= 1) {
                 dueText = "Due this round.";
             } else {
@@ -2556,6 +2560,20 @@ function evaluateCreditScore(debtCards) {
             }
         });
         cleanRound = false;
+    }
+
+    // Check Debt Card Minimum Payment
+    const debtCard = state.cards.find(c => c.meta?.debtCard);
+    if (debtCard) {
+        const paid = debtCard.payments.reduce((sum, p) => sum + p.amount, 0);
+        const min = debtCard.meta.minPayment || 0;
+        if (paid < min) {
+            const applied = applyCreditScoreChange(-15, "Missed minimum debt payment");
+            if (applied !== 0) {
+                logs.push(`Because you missed the $${min} minimum payment on your debt, your Credit Score dropped by ${Math.abs(applied)} points.`);
+            }
+            cleanRound = false;
+        }
     }
 
     if (state.creditInquiriesThisRound.length > 0) {
